@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>TRACE-LOOP | Track Device</title>
+
+    <link rel="stylesheet" href="css/style.css">
+</head>
+
+<body>
+
+    <nav class="navbar">
+
+        <div class="logo">
+            <span>TRACE</span>-LOOP
+        </div>
+
+        <div class="nav-links">
+            <a href="index.html">Home</a>
+            <a href="dashboard.html">Dashboard</a>
+            <a href="register.html">Register</a>
+            <a href="track.html">Track</a>
+        </div>
+
+        <button class="nav-button">
+            My Account
+        </button>
+
+    </nav>
+
+
+    <main class="track-page">
+
+        <!-- Header -->
+
+        <div class="track-header">
+
+            <span>DEVICE TRACE</span>
+
+            <h1>Track Your Laptop</h1>
+
+            <p>
+                Enter a TRACE-LOOP Device ID to view its
+                complete lifecycle history.
+            </p>
+
+        </div>
+
+
+        <!-- Search -->
+
+        <section class="track-search">
+
+            <label for="deviceId">
+                TRACE-LOOP DEVICE ID
+            </label>
+
+            <div class="search-box">
+
+                <input
+                    type="text"
+                    id="deviceId"
+                    placeholder="e.g. TL000001"
+                >
+
+                <button
+                    class="primary-button"
+                    onclick="searchDevice()">
+
+                    Track Device →
+
+                </button>
+
+            </div>
+
+            <small>
+                Try the demo Device ID: TL000001
+            </small>
+
+        </section>
+
+
+        <!-- Device Result -->
+
+        <section class="device-result">
+
+            <div class="result-header">
+
+                <div>
+
+                    <span>DEVICE PASSPORT</span>
+
+                    <h2>Dell Inspiron</h2>
+
+                    <p>
+                        Device ID: <strong>TL000001</strong>
+                    </p>
+
+                </div>
+
+                <div class="active-status">
+                    ● ACTIVE
+                </div>
+
+            </div>
+
+
+            <!-- Device Details -->
+
+            <div class="track-details">
+
+                <div>
+                    <small>BRAND</small>
+                    <strong>Dell</strong>
+                </div>
+
+                <div>
+                    <small>MODEL</small>
+                    <strong>Inspiron</strong>
+                </div>
+
+                <div>
+                    <small>DEVICE TYPE</small>
+                    <strong>Laptop</strong>
+                </div>
+
+                <div>
+                    <small>STATUS</small>
+                    <strong>REGISTERED</strong>
+                </div>
+
+            </div>
+
+
+            <!-- Lifecycle -->
+
+            <div class="history-heading">
+
+                <div>
+                    <span>LIFECYCLE HISTORY</span>
+                    <h2>Device Journey</h2>
+                </div>
+
+                <div class="verified-badge">
+                    ✓ Verified Record
+                </div>
+
+            </div>
+
+
+            <div class="history">
+
+
+                <!-- Event 1 -->
+
+                <div class="history-item">
+
+                    <div class="history-icon">
+                        ✓
+                    </div>
+
+                    <div class="history-content">
+
+                        <div class="history-top">
+
+                            <h3>Device Registered</h3>
+
+                            <span>
+                                02 Sep 2026
+                            </span>
+
+                        </div>
+
+                        <p>
+                            Laptop identity created and added
+                            to the TRACE-LOOP system.
+                        </p>
+
+                        <div class="event-info">
+                            Event: REGISTRATION
+                        </div>
+
+                    </div>
+
+                </div>
+
+
+                <!-- Event 2 -->
+
+                <div class="history-item">
+
+                    <div class="history-icon">
+                        🔄
+                    </div>
+
+                    <div class="history-content">
+
+                        <div class="history-top">
+
+                            <h3>Ownership Transferred</h3>
+
+                            <span>
+                                15 Sep 2026
+                            </span>
+
+                        </div>
+
+                        <p>
+                            Ownership transfer recorded through
+                            an authorized verification node.
+                        </p>
+
+                        <div class="event-info">
+                            Event: TRANSFER
+                        </div>
+
+                    </div>
+
+                </div>
+
+
+                <!-- Event 3 -->
+
+                <div class="history-item">
+
+                    <div class="history-icon">
+                        🔧
+                    </div>
+
+                    <div class="history-content">
+
+                        <div class="history-top">
+
+                            <h3>Device Refurbished</h3>
+
+                            <span>
+                                22 Oct 2026
+                            </span>
+
+                        </div>
+
+                        <p>
+                            Device underwent repair or refurbishment
+                            before continuing its lifecycle.
+                        </p>
+
+                        <div class="event-info">
+                            Event: REFURBISHMENT
+                        </div>
+
+                    </div>
+
+                </div>
+
+
+                <!-- Event 4 -->
+
+                <div class="history-item future-event">
+
+                    <div class="history-icon">
+                        ♻️
+                    </div>
+
+                    <div class="history-content">
+
+                        <div class="history-top">
+
+                            <h3>Authorized Recycling</h3>
+
+                            <span>
+                                Pending
+                            </span>
+
+                        </div>
+
+                        <p>
+                            Final recycling will be recorded when
+                            the device reaches an authorized recycler.
+                        </p>
+
+                        <div class="event-info">
+                            Event: RECYCLING
+                        </div>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+        </section>
+
+    </main>
+
+
+    <script src="js/script.js"></script>
+
+</body>
+</html>

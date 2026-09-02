@@ -33,13 +33,23 @@ def register_device():
     cursor = conn.cursor()
 
     try:
+        # Find the next available TraceLoop device number
+        cursor.execute(
+            "SELECT COUNT(*) FROM devices"
+        )
+
+        count = cursor.fetchone()[0]
+        device_id = f"TL{count + 1:06d}"
+
+        # Insert the new device
         cursor.execute(
             """
             INSERT INTO devices
-            (device_type, brand, model, serial_number, status)
-            VALUES (?, ?, ?, ?, ?)
+            (device_id, device_type, brand, model, serial_number, status)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
+                device_id,
                 device_type,
                 brand,
                 model,
@@ -48,7 +58,6 @@ def register_device():
             )
         )
 
-        device_id = cursor.lastrowid
         conn.commit()
 
         return {

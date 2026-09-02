@@ -1,4 +1,5 @@
-from flask import Flask, request
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 from database import create_tables, get_connection
 from routes.device_routes import device_bp
 from routes.user_routes import user_bp
@@ -9,6 +10,7 @@ from routes.certificate_routes import certificate_bp
 from routes.reward_routes import reward_bp
 
 app = Flask(__name__)
+CORS(app)
 app.register_blueprint(device_bp)
 app.register_blueprint(user_bp)
 app.register_blueprint(ownership_bp)

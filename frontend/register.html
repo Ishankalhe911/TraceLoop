@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>TRACE-LOOP | Register Laptop</title>
+
+    <link rel="stylesheet" href="css/style.css">
+</head>
+
+<body>
+
+    <!-- Navigation -->
+    <nav class="navbar">
+
+        <div class="logo">
+            <span>TRACE</span>-LOOP
+        </div>
+
+        <div class="nav-links">
+            <a href="index.html">Home</a>
+            <a href="dashboard.html">Dashboard</a>
+            <a href="register.html">Register</a>
+            <a href="#">Track</a>
+        </div>
+
+        <button class="nav-button">
+            My Account
+        </button>
+
+    </nav>
+
+
+    <!-- Registration Page -->
+    <main class="register-page">
+
+        <div class="register-header">
+
+            <span>DEVICE REGISTRATION</span>
+
+            <h1>Register a Laptop</h1>
+
+            <p>
+                Create a unique digital identity for a used laptop
+                and begin its TRACE-LOOP lifecycle.
+            </p>
+
+        </div>
+
+
+        <div class="register-container">
+
+
+            <!-- Form -->
+            <section class="form-card">
+
+                <div class="form-title">
+
+                    <div class="form-number">
+                        01
+                    </div>
+
+                    <div>
+                        <h2>Laptop Information</h2>
+
+                        <p>
+                            Enter the basic details of the device.
+                        </p>
+                    </div>
+
+                </div>
+
+
+                <form id="registerForm">
+
+
+                    <div class="form-group">
+
+                        <label for="deviceType">
+                            Device Type
+                        </label>
+
+                        <select id="deviceType" required>
+
+                            <option value="">
+                                Select device type
+                            </option>
+
+                            <option value="Laptop">
+                                Laptop
+                            </option>
+
+                        </select>
+
+                    </div>
+
+
+                    <div class="form-row">
+
+                        <div class="form-group">
+
+                            <label for="brand">
+                                Brand
+                            </label>
+
+                            <input
+                                type="text"
+                                id="brand"
+                                placeholder="e.g. Dell"
+                                required
+                            >
+
+                        </div>
+
+
+                        <div class="form-group">
+
+                            <label for="model">
+                                Model
+                            </label>
+
+                            <input
+                                type="text"
+                                id="model"
+                                placeholder="e.g. Inspiron 15"
+                                required
+                            >
+
+                        </div>
+
+                    </div>
+
+
+                    <div class="form-group">
+
+                        <div class="form-group">
+
+    <label for="serialNumber">
+        Serial Number
+    </label>
+
+    <input
+        type="text"
+        id="serialNumber"
+        placeholder="Enter laptop serial number"
+        required
+    >
+
+    <small>
+        The serial number helps uniquely identify
+        the physical device.
+    </small>
+
+</div>
+
+
+                    <div class="form-divider"></div>
+
+
+                    <div class="form-title">
+
+                        <div class="form-number">
+                            02
+                        </div>
+
+                        <div>
+                            <h2>Ownership Information</h2>
+
+                            <p>
+                                Information about the current owner.
+                            </p>
+                        </div>
+
+                    </div>
+
+
+                    <div class="form-row">
+
+                        <div class="form-group">
+
+                            <label for="ownerName">
+                                Owner Name
+                            </label>
+
+                            <input
+                                type="text"
+                                id="ownerName"
+                                placeholder="Enter owner name"
+                                required
+                            >
+
+                        </div>
+
+
+                        <div class="form-group">
+
+                            <label for="ownerEmail">
+                                Owner Email
+                            </label>
+
+                            <input
+                                type="email"
+                                id="ownerEmail"
+                                placeholder="Enter email"
+                                required
+                            >
+
+                        </div>
+
+                    </div>
+
+
+                    <div class="form-actions">
+
+                        <button
+                            type="button"
+                            class="cancel-button"
+                            onclick="window.location.href='dashboard.html'">
+
+                            Cancel
+
+                        </button>
+
+
+                        <button
+                            type="submit"
+                            class="primary-button">
+
+                            Register Laptop →
+
+                        </button>
+
+                    </div>
+
+
+                </form>
+
+            </section>
+
+
+            <!-- Information Card -->
+            <aside class="info-card">
+
+                <div class="info-icon">
+                    💻
+                </div>
+
+                <h2>Digital Laptop Passport</h2>
+
+                <p>
+                    Once registered, this laptop will receive a
+                    unique TRACE-LOOP Device ID.
+                </p>
+
+
+                <div class="passport-example">
+
+                    <small>EXAMPLE DEVICE ID</small>
+
+                    <strong>TL000001</strong>
+
+                </div>
+
+
+                <div class="info-list">
+
+                    <div>
+                        <span>✓</span>
+                        Unique device identity
+                    </div>
+
+                    <div>
+                        <span>✓</span>
+                        Traceable lifecycle
+                    </div>
+
+                    <div>
+                        <span>✓</span>
+                        Verified ownership records
+                    </div>
+
+                    <div>
+                        <span>✓</span>
+                        Secure lifecycle history
+                    </div>
+
+                </div>
+
+            </aside>
+
+        </div>
+
+    </main>
+
+
+    <script src="js/script.js"></script>
+
+</body>
+</html>
