@@ -1,0 +1,1748 @@
+#pragma version 11
+#pragma typetrack false
+
+// algopy.arc4.ARC4Contract.approval_program() -> uint64:
+main:
+    intcblock 0 1 2 8
+    bytecblock 0x6465766963655f 0x00 0x76657269666965725f 0x151f7c75 0x6f70657261746f72 0x72656379636c65725f 0x000c 0x002c
+    // traceloop.py:173
+    // class TraceLoopLedger(ARC4Contract):
+    txn NumAppArgs
+    bz main___algopy_default_create@26
+    txn OnCompletion
+    !
+    assert
+    txn ApplicationID
+    assert
+    pushbytess 0x7d0f6b8a 0x49ea7d45 0x0a641427 0x6024e09e 0x3fc59e86 0x9ab29c43 0xb2d9a860 0x3eb38023 0xce6cd541 0xde52d01a 0xbcadd0ac 0xc27186b9 0x62260114 0xfdefa6d8 0x796ff0e7 0x39fa3fb2 0x521ef036 // method "set_operator(address)void", method "add_verifier(address)void", method "remove_verifier(address)void", method "add_recycler(address)void", method "remove_recycler(address)void", method "register_device(string,string,string)void", method "verify_device(string,string)void", method "transfer_device(string,string)void", method "declare_hardware_change(string,string)void", method "raise_dispute(string,uint64)void", method "resolve_dispute(string,uint64)void", method "mark_recycled(string)void", method "mark_exported(string)void", method "get_device_state(string)(uint64,string,string,bool,address,uint64)", method "can_verify(string)bool", method "can_transfer(string)bool", method "can_recycle(string)bool"
+    txna ApplicationArgs 0
+    match set_operator add_verifier remove_verifier add_recycler remove_recycler register_device verify_device transfer_device declare_hardware_change raise_dispute resolve_dispute mark_recycled mark_exported get_device_state can_verify can_transfer can_recycle
+    err
+
+main___algopy_default_create@26:
+    txn OnCompletion
+    !
+    txn ApplicationID
+    !
+    &&
+    return
+
+
+// traceloop.TraceLoopLedger.set_operator[routing]() -> void:
+set_operator:
+    // traceloop.py:204
+    // @arc4.abimethod
+    txna ApplicationArgs 1
+    dup
+    len
+    pushint 32
+    ==
+    assert // invalid number of bytes for arc4.static_array<arc4.uint8, 32>
+    // traceloop.py:208
+    // assert Txn.sender == Global.creator_address, "only admin"
+    txn Sender
+    global CreatorAddress
+    ==
+    assert // only admin
+    // traceloop.py:209
+    // self.operator.value = operator
+    bytec 4 // 0x6f70657261746f72
+    swap
+    box_put
+    // traceloop.py:204
+    // @arc4.abimethod
+    intc_1 // 1
+    return
+
+
+// traceloop.TraceLoopLedger.add_verifier[routing]() -> void:
+add_verifier:
+    // traceloop.py:211
+    // @arc4.abimethod
+    txna ApplicationArgs 1
+    dup
+    len
+    pushint 32
+    ==
+    assert // invalid number of bytes for arc4.static_array<arc4.uint8, 32>
+    // traceloop.py:215
+    // assert Txn.sender == Global.creator_address, "only admin"
+    txn Sender
+    global CreatorAddress
+    ==
+    assert // only admin
+    // traceloop.py:216
+    // self.verifiers[verifier] = arc4.Bool(True)  # noqa: FBT003
+    bytec_2 // 0x76657269666965725f
+    swap
+    concat
+    pushbytes 0x80
+    box_put
+    // traceloop.py:211
+    // @arc4.abimethod
+    intc_1 // 1
+    return
+
+
+// traceloop.TraceLoopLedger.remove_verifier[routing]() -> void:
+remove_verifier:
+    // traceloop.py:218
+    // @arc4.abimethod
+    txna ApplicationArgs 1
+    dup
+    len
+    pushint 32
+    ==
+    assert // invalid number of bytes for arc4.static_array<arc4.uint8, 32>
+    // traceloop.py:222
+    // assert Txn.sender == Global.creator_address, "only admin"
+    txn Sender
+    global CreatorAddress
+    ==
+    assert // only admin
+    // traceloop.py:223
+    // assert verifier in self.verifiers, "verifier not found"
+    bytec_2 // 0x76657269666965725f
+    swap
+    concat
+    dup
+    box_len
+    bury 1
+    assert // verifier not found
+    // traceloop.py:224
+    // del self.verifiers[verifier]
+    box_del
+    pop
+    // traceloop.py:218
+    // @arc4.abimethod
+    intc_1 // 1
+    return
+
+
+// traceloop.TraceLoopLedger.add_recycler[routing]() -> void:
+add_recycler:
+    // traceloop.py:226
+    // @arc4.abimethod
+    txna ApplicationArgs 1
+    dup
+    len
+    pushint 32
+    ==
+    assert // invalid number of bytes for arc4.static_array<arc4.uint8, 32>
+    // traceloop.py:229
+    // assert Txn.sender == Global.creator_address, "only admin"
+    txn Sender
+    global CreatorAddress
+    ==
+    assert // only admin
+    // traceloop.py:230
+    // self.recyclers[recycler] = arc4.Bool(True)  # noqa: FBT003
+    bytec 5 // 0x72656379636c65725f
+    swap
+    concat
+    pushbytes 0x80
+    box_put
+    // traceloop.py:226
+    // @arc4.abimethod
+    intc_1 // 1
+    return
+
+
+// traceloop.TraceLoopLedger.remove_recycler[routing]() -> void:
+remove_recycler:
+    // traceloop.py:231
+    // @arc4.abimethod
+    txna ApplicationArgs 1
+    dup
+    len
+    pushint 32
+    ==
+    assert // invalid number of bytes for arc4.static_array<arc4.uint8, 32>
+    // traceloop.py:234
+    // assert Txn.sender == Global.creator_address, "only admin"
+    txn Sender
+    global CreatorAddress
+    ==
+    assert // only admin
+    // traceloop.py:235
+    // assert recycler in self.recyclers, "recycler not found"
+    bytec 5 // 0x72656379636c65725f
+    swap
+    concat
+    dup
+    box_len
+    bury 1
+    assert // recycler not found
+    // traceloop.py:236
+    // del self.recyclers[recycler]
+    box_del
+    pop
+    // traceloop.py:231
+    // @arc4.abimethod
+    intc_1 // 1
+    return
+
+
+// traceloop.TraceLoopLedger.register_device[routing]() -> void:
+register_device:
+    // traceloop.py:259
+    // @arc4.abimethod
+    txna ApplicationArgs 1
+    dup
+    intc_0 // 0
+    extract_uint16 // on error: invalid array length header
+    intc_2 // 2
+    +
+    dig 1
+    len
+    dup
+    uncover 2
+    ==
+    assert // invalid number of bytes for arc4.dynamic_array<arc4.uint8>
+    txna ApplicationArgs 2
+    dup
+    intc_0 // 0
+    extract_uint16 // on error: invalid array length header
+    intc_2 // 2
+    +
+    dig 1
+    len
+    dup
+    uncover 2
+    ==
+    assert // invalid number of bytes for arc4.dynamic_array<arc4.uint8>
+    txna ApplicationArgs 3
+    dup
+    intc_0 // 0
+    extract_uint16 // on error: invalid array length header
+    intc_2 // 2
+    +
+    dig 1
+    len
+    ==
+    assert // invalid number of bytes for arc4.dynamic_array<arc4.uint8>
+    // traceloop.py:266
+    // self._assert_operator()
+    callsub _assert_operator
+    // traceloop.py:267
+    // assert device_id not in self.devices, "device already registered"
+    bytec_0 // 0x6465766963655f
+    dig 5
+    concat
+    dup
+    box_len
+    bury 1
+    !
+    assert // device already registered
+    // traceloop.py:274
+    // last_verifier=arc4.Address(Global.zero_address),
+    global ZeroAddress
+    // traceloop.py:275
+    // updated_at=arc4.UInt64(Global.latest_timestamp),
+    global LatestTimestamp
+    itob
+    // traceloop.py:269-276
+    // record = DeviceRecord(
+    //     state=arc4.UInt64(STATE_REGISTERED),
+    //     owner_hash=owner_hash,
+    //     config_hash=config_hash,
+    //     stamp_valid=arc4.Bool(False),  # noqa: FBT003 — not verified yet
+    //     last_verifier=arc4.Address(Global.zero_address),
+    //     updated_at=arc4.UInt64(Global.latest_timestamp),
+    // )
+    pushint 53
+    uncover 5
+    +
+    itob
+    extract 6 2
+    pushbytes 0x00000000000000010035
+    swap
+    concat
+    // traceloop.py:273
+    // stamp_valid=arc4.Bool(False),  # noqa: FBT003 — not verified yet
+    bytec_1 // 0x00
+    // traceloop.py:269-276
+    // record = DeviceRecord(
+    //     state=arc4.UInt64(STATE_REGISTERED),
+    //     owner_hash=owner_hash,
+    //     config_hash=config_hash,
+    //     stamp_valid=arc4.Bool(False),  # noqa: FBT003 — not verified yet
+    //     last_verifier=arc4.Address(Global.zero_address),
+    //     updated_at=arc4.UInt64(Global.latest_timestamp),
+    // )
+    concat
+    uncover 2
+    concat
+    swap
+    concat
+    dig 3
+    concat
+    uncover 2
+    concat
+    // traceloop.py:277
+    // self.devices[device_id] = record.copy()
+    dig 1
+    box_del
+    pop
+    box_put
+    // traceloop.py:283
+    // timestamp=arc4.UInt64(Global.latest_timestamp),
+    global LatestTimestamp
+    itob
+    // traceloop.py:280-284
+    // DeviceRegistered(
+    //     device_id=device_id,
+    //     owner_hash=owner_hash,
+    //     timestamp=arc4.UInt64(Global.latest_timestamp),
+    // )
+    pushint 12
+    uncover 3
+    +
+    itob
+    extract 6 2
+    bytec 6 // 0x000c
+    swap
+    concat
+    swap
+    concat
+    uncover 2
+    concat
+    swap
+    concat
+    // traceloop.py:279-285
+    // arc4.emit(
+    //     DeviceRegistered(
+    //         device_id=device_id,
+    //         owner_hash=owner_hash,
+    //         timestamp=arc4.UInt64(Global.latest_timestamp),
+    //     )
+    // )
+    pushbytes 0x4bf8d7c4 // method "DeviceRegistered(string,string,uint64)"
+    swap
+    concat
+    log
+    // traceloop.py:259
+    // @arc4.abimethod
+    intc_1 // 1
+    return
+
+
+// traceloop.TraceLoopLedger.verify_device[routing]() -> void:
+verify_device:
+    // traceloop.py:292
+    // @arc4.abimethod
+    txna ApplicationArgs 1
+    dupn 2
+    intc_0 // 0
+    extract_uint16 // on error: invalid array length header
+    intc_2 // 2
+    +
+    dig 1
+    len
+    dup
+    cover 3
+    ==
+    assert // invalid number of bytes for arc4.dynamic_array<arc4.uint8>
+    txna ApplicationArgs 2
+    dup
+    cover 2
+    dup
+    intc_0 // 0
+    extract_uint16 // on error: invalid array length header
+    intc_2 // 2
+    +
+    swap
+    len
+    ==
+    assert // invalid number of bytes for arc4.dynamic_array<arc4.uint8>
+    // traceloop.py:298
+    // self._assert_verifier()
+    callsub _assert_verifier
+    // traceloop.py:299
+    // assert device_id in self.devices, "device not registered"
+    bytec_0 // 0x6465766963655f
+    swap
+    concat
+    dupn 2
+    box_len
+    bury 1
+    assert // device not registered
+    // traceloop.py:301
+    // record = self.devices[device_id].copy()
+    dup
+    box_get
+    pop
+    swap
+    // traceloop.py:301-302
+    // record = self.devices[device_id].copy()
+    // state = record.state.native
+    intc_0 // 0
+    intc_3 // 8
+    box_extract // on error: index out of bounds
+    // traceloop.py:302
+    // state = record.state.native
+    btoi
+    dup
+    cover 6
+    // traceloop.py:303
+    // self._assert_not_terminal(state)
+    dup
+    callsub _assert_not_terminal
+    // traceloop.py:305
+    // state == STATE_REGISTERED
+    intc_1 // 1
+    ==
+    // traceloop.py:305-307
+    // state == STATE_REGISTERED
+    // or state == STATE_TRANSFERRED
+    // or (state == STATE_VERIFIED and not record.stamp_valid.native)
+    bnz verify_device_bool_true@5
+    // traceloop.py:306
+    // or state == STATE_TRANSFERRED
+    dig 5
+    pushint 3
+    ==
+    // traceloop.py:305-307
+    // state == STATE_REGISTERED
+    // or state == STATE_TRANSFERRED
+    // or (state == STATE_VERIFIED and not record.stamp_valid.native)
+    bnz verify_device_bool_true@5
+    // traceloop.py:307
+    // or (state == STATE_VERIFIED and not record.stamp_valid.native)
+    dig 5
+    intc_2 // 2
+    ==
+    bz verify_device_bool_false@6
+    dig 1
+    pushint 12
+    intc_1 // 1
+    box_extract // on error: index out of bounds
+    intc_0 // 0
+    getbit
+    bytec_1 // 0x00
+    intc_0 // 0
+    uncover 2
+    setbit
+    intc_0 // 0
+    getbit
+    bnz verify_device_bool_false@6
+
+verify_device_bool_true@5:
+    intc_1 // 1
+
+verify_device_bool_merge@7:
+    // traceloop.py:304-308
+    // assert (
+    //     state == STATE_REGISTERED
+    //     or state == STATE_TRANSFERRED
+    //     or (state == STATE_VERIFIED and not record.stamp_valid.native)
+    // ), "verify only allowed from REGISTERED, TRANSFERRED, or VERIFIED with invalid stamp"
+    assert // verify only allowed from REGISTERED, TRANSFERRED, or VERIFIED with invalid stamp
+    // traceloop.py:310
+    // record.state = arc4.UInt64(STATE_VERIFIED)
+    intc_2 // 2
+    itob
+    replace2 0
+    // traceloop.py:311
+    // record.config_hash = confirmed_config_hash
+    dup
+    pushint 10
+    extract_uint16
+    intc_0 // 0
+    swap
+    extract3
+    uncover 2
+    dup
+    cover 2
+    concat
+    // traceloop.py:312
+    // record.stamp_valid = arc4.Bool(True)  # noqa: FBT003
+    pushint 96
+    intc_1 // 1
+    setbit
+    // traceloop.py:313
+    // record.last_verifier = arc4.Address(Txn.sender)
+    txn Sender
+    replace2 13
+    // traceloop.py:314
+    // record.updated_at = arc4.UInt64(Global.latest_timestamp)
+    global LatestTimestamp
+    itob
+    replace2 45
+    // traceloop.py:315
+    // self.devices[device_id] = record.copy()
+    uncover 2
+    dup
+    box_del
+    pop
+    swap
+    box_put
+    // traceloop.py:320
+    // verifier=arc4.Address(Txn.sender),
+    txn Sender
+    // traceloop.py:322
+    // timestamp=arc4.UInt64(Global.latest_timestamp),
+    global LatestTimestamp
+    itob
+    // traceloop.py:318-323
+    // DeviceVerified(
+    //     device_id=device_id,
+    //     verifier=arc4.Address(Txn.sender),
+    //     config_hash=confirmed_config_hash,
+    //     timestamp=arc4.UInt64(Global.latest_timestamp),
+    // )
+    pushint 44
+    uncover 4
+    +
+    bytec 7 // 0x002c
+    uncover 3
+    concat
+    swap
+    itob
+    extract 6 2
+    concat
+    swap
+    concat
+    uncover 2
+    concat
+    swap
+    concat
+    // traceloop.py:317-324
+    // arc4.emit(
+    //     DeviceVerified(
+    //         device_id=device_id,
+    //         verifier=arc4.Address(Txn.sender),
+    //         config_hash=confirmed_config_hash,
+    //         timestamp=arc4.UInt64(Global.latest_timestamp),
+    //     )
+    // )
+    pushbytes 0xd4f110d6 // method "DeviceVerified(string,address,string,uint64)"
+    swap
+    concat
+    log
+    // traceloop.py:292
+    // @arc4.abimethod
+    intc_1 // 1
+    return
+
+verify_device_bool_false@6:
+    intc_0 // 0
+    b verify_device_bool_merge@7
+
+
+// traceloop.TraceLoopLedger.transfer_device[routing]() -> void:
+transfer_device:
+    // traceloop.py:333
+    // @arc4.abimethod
+    txna ApplicationArgs 1
+    dup
+    intc_0 // 0
+    extract_uint16 // on error: invalid array length header
+    intc_2 // 2
+    +
+    dig 1
+    len
+    dup
+    uncover 2
+    ==
+    assert // invalid number of bytes for arc4.dynamic_array<arc4.uint8>
+    txna ApplicationArgs 2
+    dup
+    intc_0 // 0
+    extract_uint16 // on error: invalid array length header
+    intc_2 // 2
+    +
+    dig 1
+    len
+    dup
+    uncover 2
+    ==
+    assert // invalid number of bytes for arc4.dynamic_array<arc4.uint8>
+    // traceloop.py:339
+    // self._assert_verifier()
+    callsub _assert_verifier
+    // traceloop.py:340
+    // assert device_id in self.devices, "device not registered"
+    bytec_0 // 0x6465766963655f
+    dig 4
+    concat
+    dup
+    box_len
+    bury 1
+    assert // device not registered
+    // traceloop.py:342
+    // record = self.devices[device_id].copy()
+    dup
+    box_get
+    pop
+    swap
+    // traceloop.py:342-343
+    // record = self.devices[device_id].copy()
+    // state = record.state.native
+    dup
+    intc_0 // 0
+    intc_3 // 8
+    box_extract // on error: index out of bounds
+    // traceloop.py:343
+    // state = record.state.native
+    btoi
+    // traceloop.py:344
+    // self._assert_not_terminal(state)
+    dup
+    callsub _assert_not_terminal
+    // traceloop.py:345
+    // assert state == STATE_VERIFIED, "transfer only allowed from VERIFIED"
+    intc_2 // 2
+    ==
+    assert // transfer only allowed from VERIFIED
+    // traceloop.py:346
+    // assert record.stamp_valid.native, "stamp not valid — re-verify first"
+    dup
+    pushint 12
+    intc_1 // 1
+    box_extract // on error: index out of bounds
+    intc_0 // 0
+    getbit
+    bytec_1 // 0x00
+    intc_0 // 0
+    uncover 2
+    setbit
+    intc_0 // 0
+    getbit
+    assert // stamp not valid — re-verify first
+    // traceloop.py:348
+    // record.state = arc4.UInt64(STATE_TRANSFERRED)
+    pushint 3
+    itob
+    uncover 2
+    swap
+    replace2 0
+    // traceloop.py:349
+    // record.owner_hash = new_owner_hash
+    dup
+    intc_3 // 8
+    extract_uint16
+    dig 1
+    intc_0 // 0
+    dig 2
+    extract3
+    dig 5
+    concat
+    dig 2
+    pushint 10
+    extract_uint16
+    dig 3
+    len
+    uncover 4
+    dig 2
+    uncover 2
+    substring3
+    uncover 2
+    swap
+    concat
+    dig 1
+    uncover 3
+    -
+    uncover 2
+    uncover 4
+    +
+    swap
+    -
+    itob
+    extract 6 2
+    replace2 10
+    // traceloop.py:350
+    // record.updated_at = arc4.UInt64(Global.latest_timestamp)
+    global LatestTimestamp
+    itob
+    replace2 45
+    // traceloop.py:351
+    // self.devices[device_id] = record.copy()
+    dig 1
+    box_del
+    pop
+    box_put
+    // traceloop.py:357
+    // verifier=arc4.Address(Txn.sender),
+    txn Sender
+    // traceloop.py:358
+    // timestamp=arc4.UInt64(Global.latest_timestamp),
+    global LatestTimestamp
+    itob
+    // traceloop.py:354-359
+    // DeviceTransferred(
+    //     device_id=device_id,
+    //     new_owner_hash=new_owner_hash,
+    //     verifier=arc4.Address(Txn.sender),
+    //     timestamp=arc4.UInt64(Global.latest_timestamp),
+    // )
+    pushint 44
+    uncover 4
+    +
+    itob
+    extract 6 2
+    bytec 7 // 0x002c
+    swap
+    concat
+    uncover 2
+    concat
+    swap
+    concat
+    uncover 2
+    concat
+    swap
+    concat
+    // traceloop.py:353-360
+    // arc4.emit(
+    //     DeviceTransferred(
+    //         device_id=device_id,
+    //         new_owner_hash=new_owner_hash,
+    //         verifier=arc4.Address(Txn.sender),
+    //         timestamp=arc4.UInt64(Global.latest_timestamp),
+    //     )
+    // )
+    pushbytes 0xd95068b9 // method "DeviceTransferred(string,string,address,uint64)"
+    swap
+    concat
+    log
+    // traceloop.py:333
+    // @arc4.abimethod
+    intc_1 // 1
+    return
+
+
+// traceloop.TraceLoopLedger.declare_hardware_change[routing]() -> void:
+declare_hardware_change:
+    // traceloop.py:367
+    // @arc4.abimethod
+    txna ApplicationArgs 1
+    dupn 2
+    intc_0 // 0
+    extract_uint16 // on error: invalid array length header
+    intc_2 // 2
+    +
+    dig 1
+    len
+    dup
+    cover 3
+    ==
+    assert // invalid number of bytes for arc4.dynamic_array<arc4.uint8>
+    txna ApplicationArgs 2
+    dup
+    cover 2
+    dup
+    intc_0 // 0
+    extract_uint16 // on error: invalid array length header
+    intc_2 // 2
+    +
+    swap
+    len
+    ==
+    assert // invalid number of bytes for arc4.dynamic_array<arc4.uint8>
+    // traceloop.py:373
+    // self._assert_operator()
+    callsub _assert_operator
+    // traceloop.py:374
+    // assert device_id in self.devices, "device not registered"
+    bytec_0 // 0x6465766963655f
+    swap
+    concat
+    dupn 2
+    box_len
+    bury 1
+    assert // device not registered
+    // traceloop.py:376
+    // record = self.devices[device_id].copy()
+    dup
+    box_get
+    pop
+    swap
+    // traceloop.py:376-377
+    // record = self.devices[device_id].copy()
+    // state = record.state.native
+    intc_0 // 0
+    intc_3 // 8
+    box_extract // on error: index out of bounds
+    // traceloop.py:377
+    // state = record.state.native
+    btoi
+    dup
+    cover 6
+    // traceloop.py:378
+    // self._assert_not_terminal(state)
+    dup
+    callsub _assert_not_terminal
+    // traceloop.py:379-381
+    // # Disputed devices cannot declare hardware changes — dispute
+    // # must be resolved first.
+    // assert state != STATE_DISPUTED, (
+    dup
+    pushint 4
+    !=
+    // traceloop.py:379-383
+    // # Disputed devices cannot declare hardware changes — dispute
+    // # must be resolved first.
+    // assert state != STATE_DISPUTED, (
+    //     "cannot declare hardware change while disputed"
+    // )
+    assert // cannot declare hardware change while disputed
+    // traceloop.py:389
+    // state == STATE_REGISTERED
+    intc_1 // 1
+    ==
+    // traceloop.py:389-391
+    // state == STATE_REGISTERED
+    // or state == STATE_VERIFIED
+    // or state == STATE_TRANSFERRED
+    bnz declare_hardware_change_bool_true@4
+    // traceloop.py:390
+    // or state == STATE_VERIFIED
+    dig 5
+    intc_2 // 2
+    ==
+    // traceloop.py:389-391
+    // state == STATE_REGISTERED
+    // or state == STATE_VERIFIED
+    // or state == STATE_TRANSFERRED
+    bnz declare_hardware_change_bool_true@4
+    // traceloop.py:391
+    // or state == STATE_TRANSFERRED
+    dig 5
+    pushint 3
+    ==
+    // traceloop.py:389-391
+    // state == STATE_REGISTERED
+    // or state == STATE_VERIFIED
+    // or state == STATE_TRANSFERRED
+    bz declare_hardware_change_bool_false@5
+
+declare_hardware_change_bool_true@4:
+    intc_1 // 1
+
+declare_hardware_change_bool_merge@6:
+    // traceloop.py:384-392
+    // # Valid in any active ownership state: before first verify
+    // # (REGISTERED), after verify (VERIFIED), or after transfer
+    // # (TRANSFERRED). Per SOP 1.2, FIRST_BUYER is explicitly
+    // # permitted to declare changes before initial verification.
+    // assert (
+    //     state == STATE_REGISTERED
+    //     or state == STATE_VERIFIED
+    //     or state == STATE_TRANSFERRED
+    // ), "hardware change only allowed in REGISTERED, VERIFIED, or TRANSFERRED"
+    assert // hardware change only allowed in REGISTERED, VERIFIED, or TRANSFERRED
+    // traceloop.py:394
+    // record.config_hash = new_config_hash
+    dup
+    pushint 10
+    extract_uint16
+    intc_0 // 0
+    swap
+    extract3
+    uncover 2
+    dup
+    cover 2
+    concat
+    // traceloop.py:395
+    // record.stamp_valid = arc4.Bool(False)  # noqa: FBT003 — force re-verify
+    pushint 96
+    intc_0 // 0
+    setbit
+    // traceloop.py:396
+    // record.updated_at = arc4.UInt64(Global.latest_timestamp)
+    global LatestTimestamp
+    itob
+    replace2 45
+    // traceloop.py:397
+    // self.devices[device_id] = record.copy()
+    uncover 2
+    dup
+    box_del
+    pop
+    swap
+    box_put
+    // traceloop.py:403
+    // timestamp=arc4.UInt64(Global.latest_timestamp),
+    global LatestTimestamp
+    itob
+    // traceloop.py:400-404
+    // HardwareChangeDeclared(
+    //     device_id=device_id,
+    //     new_config_hash=new_config_hash,
+    //     timestamp=arc4.UInt64(Global.latest_timestamp),
+    // )
+    pushint 12
+    uncover 3
+    +
+    itob
+    extract 6 2
+    bytec 6 // 0x000c
+    swap
+    concat
+    swap
+    concat
+    uncover 2
+    concat
+    swap
+    concat
+    // traceloop.py:399-405
+    // arc4.emit(
+    //     HardwareChangeDeclared(
+    //         device_id=device_id,
+    //         new_config_hash=new_config_hash,
+    //         timestamp=arc4.UInt64(Global.latest_timestamp),
+    //     )
+    // )
+    pushbytes 0xc7d4c2e1 // method "HardwareChangeDeclared(string,string,uint64)"
+    swap
+    concat
+    log
+    // traceloop.py:367
+    // @arc4.abimethod
+    intc_1 // 1
+    return
+
+declare_hardware_change_bool_false@5:
+    intc_0 // 0
+    b declare_hardware_change_bool_merge@6
+
+
+// traceloop.TraceLoopLedger.raise_dispute[routing]() -> void:
+raise_dispute:
+    // traceloop.py:412
+    // @arc4.abimethod
+    txna ApplicationArgs 1
+    dup
+    intc_0 // 0
+    extract_uint16 // on error: invalid array length header
+    intc_2 // 2
+    +
+    dig 1
+    len
+    ==
+    assert // invalid number of bytes for arc4.dynamic_array<arc4.uint8>
+    txna ApplicationArgs 2
+    dup
+    len
+    intc_3 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    // traceloop.py:418
+    // is_operator = Txn.sender == self.operator.value.native
+    txn Sender
+    bytec 4 // 0x6f70657261746f72
+    box_get
+    assert // check self.operator exists
+    ==
+    // traceloop.py:419
+    // is_verifier = arc4.Address(Txn.sender) in self.verifiers
+    bytec_2 // 0x76657269666965725f
+    txn Sender
+    concat
+    box_len
+    bury 1
+    // traceloop.py:420
+    // assert is_operator or is_verifier, "not authorized to raise dispute"
+    ||
+    assert // not authorized to raise dispute
+    // traceloop.py:421
+    // assert device_id in self.devices, "device not registered"
+    bytec_0 // 0x6465766963655f
+    dig 2
+    concat
+    dup
+    box_len
+    bury 1
+    assert // device not registered
+    // traceloop.py:423
+    // record = self.devices[device_id].copy()
+    dup
+    box_get
+    pop
+    swap
+    // traceloop.py:423-424
+    // record = self.devices[device_id].copy()
+    // state = record.state.native
+    dup
+    intc_0 // 0
+    intc_3 // 8
+    box_extract // on error: index out of bounds
+    // traceloop.py:424
+    // state = record.state.native
+    btoi
+    // traceloop.py:425
+    // self._assert_not_terminal(state)
+    callsub _assert_not_terminal
+    // traceloop.py:427
+    // record.state = arc4.UInt64(STATE_DISPUTED)
+    pushint 4
+    itob
+    uncover 2
+    swap
+    replace2 0
+    // traceloop.py:428
+    // record.stamp_valid = arc4.Bool(False)  # noqa: FBT003
+    pushint 96
+    intc_0 // 0
+    setbit
+    // traceloop.py:429
+    // record.updated_at = arc4.UInt64(Global.latest_timestamp)
+    global LatestTimestamp
+    itob
+    replace2 45
+    // traceloop.py:430
+    // self.devices[device_id] = record.copy()
+    dig 1
+    box_del
+    pop
+    box_put
+    // traceloop.py:435
+    // raised_by=arc4.Address(Txn.sender),
+    txn Sender
+    // traceloop.py:437
+    // timestamp=arc4.UInt64(Global.latest_timestamp),
+    global LatestTimestamp
+    itob
+    // traceloop.py:433-438
+    // DisputeRaised(
+    //     device_id=device_id,
+    //     raised_by=arc4.Address(Txn.sender),
+    //     dispute_type=dispute_type,
+    //     timestamp=arc4.UInt64(Global.latest_timestamp),
+    // )
+    pushbytes 0x0032
+    uncover 2
+    concat
+    uncover 2
+    concat
+    swap
+    concat
+    swap
+    concat
+    // traceloop.py:432-439
+    // arc4.emit(
+    //     DisputeRaised(
+    //         device_id=device_id,
+    //         raised_by=arc4.Address(Txn.sender),
+    //         dispute_type=dispute_type,
+    //         timestamp=arc4.UInt64(Global.latest_timestamp),
+    //     )
+    // )
+    pushbytes 0x442289a4 // method "DisputeRaised(string,address,uint64,uint64)"
+    swap
+    concat
+    log
+    // traceloop.py:412
+    // @arc4.abimethod
+    intc_1 // 1
+    return
+
+
+// traceloop.TraceLoopLedger.resolve_dispute[routing]() -> void:
+resolve_dispute:
+    // traceloop.py:441
+    // @arc4.abimethod
+    txna ApplicationArgs 1
+    dupn 2
+    intc_0 // 0
+    extract_uint16 // on error: invalid array length header
+    intc_2 // 2
+    +
+    dig 1
+    len
+    ==
+    assert // invalid number of bytes for arc4.dynamic_array<arc4.uint8>
+    txna ApplicationArgs 2
+    dup
+    cover 2
+    dup
+    len
+    intc_3 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    // traceloop.py:450
+    // assert Txn.sender == Global.creator_address, "only admin"
+    txn Sender
+    global CreatorAddress
+    ==
+    assert // only admin
+    // traceloop.py:451
+    // assert device_id in self.devices, "device not registered"
+    bytec_0 // 0x6465766963655f
+    uncover 2
+    concat
+    dup
+    cover 2
+    dup
+    box_len
+    bury 1
+    assert // device not registered
+    // traceloop.py:453
+    // record = self.devices[device_id].copy()
+    dup
+    box_get
+    pop
+    cover 2
+    // traceloop.py:453-454
+    // record = self.devices[device_id].copy()
+    // assert record.state.native == STATE_DISPUTED, "device not disputed"
+    intc_0 // 0
+    intc_3 // 8
+    box_extract // on error: index out of bounds
+    // traceloop.py:454
+    // assert record.state.native == STATE_DISPUTED, "device not disputed"
+    btoi
+    pushint 4
+    ==
+    assert // device not disputed
+    // traceloop.py:456
+    // target = resolved_state.native
+    btoi
+    dup
+    cover 5
+    // traceloop.py:458
+    // target == STATE_REGISTERED
+    intc_1 // 1
+    ==
+    // traceloop.py:458-460
+    // target == STATE_REGISTERED
+    // or target == STATE_VERIFIED
+    // or target == STATE_TRANSFERRED
+    bnz resolve_dispute_bool_true@4
+    // traceloop.py:459
+    // or target == STATE_VERIFIED
+    dig 4
+    intc_2 // 2
+    ==
+    // traceloop.py:458-460
+    // target == STATE_REGISTERED
+    // or target == STATE_VERIFIED
+    // or target == STATE_TRANSFERRED
+    bnz resolve_dispute_bool_true@4
+    // traceloop.py:460
+    // or target == STATE_TRANSFERRED
+    dig 4
+    pushint 3
+    ==
+    // traceloop.py:458-460
+    // target == STATE_REGISTERED
+    // or target == STATE_VERIFIED
+    // or target == STATE_TRANSFERRED
+    bz resolve_dispute_bool_false@5
+
+resolve_dispute_bool_true@4:
+    intc_1 // 1
+
+resolve_dispute_bool_merge@6:
+    // traceloop.py:457-461
+    // assert (
+    //     target == STATE_REGISTERED
+    //     or target == STATE_VERIFIED
+    //     or target == STATE_TRANSFERRED
+    // ), "must resolve into REGISTERED, VERIFIED, or TRANSFERRED"
+    assert // must resolve into REGISTERED, VERIFIED, or TRANSFERRED
+    // traceloop.py:463
+    // record.state = arc4.UInt64(target)
+    uncover 2
+    dup
+    cover 2
+    replace2 0
+    // traceloop.py:464-466
+    // # Always force re-verification after a dispute resolution,
+    // # regardless of which state it resolves into.
+    // record.stamp_valid = arc4.Bool(False)  # noqa: FBT003
+    pushint 96
+    intc_0 // 0
+    setbit
+    // traceloop.py:467
+    // record.updated_at = arc4.UInt64(Global.latest_timestamp)
+    global LatestTimestamp
+    itob
+    replace2 45
+    // traceloop.py:468
+    // self.devices[device_id] = record.copy()
+    uncover 2
+    dup
+    box_del
+    pop
+    swap
+    box_put
+    // traceloop.py:474
+    // timestamp=arc4.UInt64(Global.latest_timestamp),
+    global LatestTimestamp
+    itob
+    // traceloop.py:471-475
+    // DisputeResolved(
+    //     device_id=device_id,
+    //     resolved_state=resolved_state,
+    //     timestamp=arc4.UInt64(Global.latest_timestamp),
+    // )
+    pushbytes 0x0012
+    uncover 2
+    concat
+    swap
+    concat
+    swap
+    concat
+    // traceloop.py:470-476
+    // arc4.emit(
+    //     DisputeResolved(
+    //         device_id=device_id,
+    //         resolved_state=resolved_state,
+    //         timestamp=arc4.UInt64(Global.latest_timestamp),
+    //     )
+    // )
+    pushbytes 0xa2191e7a // method "DisputeResolved(string,uint64,uint64)"
+    swap
+    concat
+    log
+    // traceloop.py:441
+    // @arc4.abimethod
+    intc_1 // 1
+    return
+
+resolve_dispute_bool_false@5:
+    intc_0 // 0
+    b resolve_dispute_bool_merge@6
+
+
+// traceloop.TraceLoopLedger.mark_recycled[routing]() -> void:
+mark_recycled:
+    // traceloop.py:486
+    // @arc4.abimethod
+    txna ApplicationArgs 1
+    dup
+    intc_0 // 0
+    extract_uint16 // on error: invalid array length header
+    intc_2 // 2
+    +
+    dig 1
+    len
+    ==
+    assert // invalid number of bytes for arc4.dynamic_array<arc4.uint8>
+    // traceloop.py:249
+    // assert arc4.Address(Txn.sender) in self.recyclers, "not an authorized recycler"
+    bytec 5 // 0x72656379636c65725f
+    txn Sender
+    concat
+    box_len
+    bury 1
+    assert // not an authorized recycler
+    // traceloop.py:489
+    // assert device_id in self.devices, "device not registered"
+    bytec_0 // 0x6465766963655f
+    dig 1
+    concat
+    dup
+    box_len
+    bury 1
+    assert // device not registered
+    // traceloop.py:491
+    // record = self.devices[device_id].copy()
+    dup
+    box_get
+    pop
+    swap
+    // traceloop.py:493
+    // record.state.native == STATE_TRANSFERRED
+    dup
+    intc_0 // 0
+    intc_3 // 8
+    box_extract // on error: index out of bounds
+    btoi
+    pushint 3
+    ==
+    // traceloop.py:492-494
+    // assert (
+    //     record.state.native == STATE_TRANSFERRED
+    // ), "device must be freshly TRANSFERRED to a recycler to be recycled"
+    assert // device must be freshly TRANSFERRED to a recycler to be recycled
+    // traceloop.py:496
+    // record.state = arc4.UInt64(STATE_RECYCLED)
+    pushint 5
+    itob
+    uncover 2
+    swap
+    replace2 0
+    // traceloop.py:497
+    // record.updated_at = arc4.UInt64(Global.latest_timestamp)
+    global LatestTimestamp
+    itob
+    replace2 45
+    // traceloop.py:498
+    // self.devices[device_id] = record.copy()
+    dig 1
+    box_del
+    pop
+    box_put
+    // traceloop.py:503
+    // recycler=arc4.Address(Txn.sender),
+    txn Sender
+    // traceloop.py:504
+    // timestamp=arc4.UInt64(Global.latest_timestamp),
+    global LatestTimestamp
+    itob
+    // traceloop.py:501-505
+    // DeviceRecycled(
+    //     device_id=device_id,
+    //     recycler=arc4.Address(Txn.sender),
+    //     timestamp=arc4.UInt64(Global.latest_timestamp),
+    // )
+    pushbytes 0x002a
+    uncover 2
+    concat
+    swap
+    concat
+    swap
+    concat
+    // traceloop.py:500-506
+    // arc4.emit(
+    //     DeviceRecycled(
+    //         device_id=device_id,
+    //         recycler=arc4.Address(Txn.sender),
+    //         timestamp=arc4.UInt64(Global.latest_timestamp),
+    //     )
+    // )
+    pushbytes 0x66d56cb4 // method "DeviceRecycled(string,address,uint64)"
+    swap
+    concat
+    log
+    // traceloop.py:486
+    // @arc4.abimethod
+    intc_1 // 1
+    return
+
+
+// traceloop.TraceLoopLedger.mark_exported[routing]() -> void:
+mark_exported:
+    // traceloop.py:512
+    // @arc4.abimethod
+    txna ApplicationArgs 1
+    dup
+    intc_0 // 0
+    extract_uint16 // on error: invalid array length header
+    intc_2 // 2
+    +
+    dig 1
+    len
+    ==
+    assert // invalid number of bytes for arc4.dynamic_array<arc4.uint8>
+    // traceloop.py:514
+    // assert Txn.sender == Global.creator_address, "only admin"
+    txn Sender
+    global CreatorAddress
+    ==
+    assert // only admin
+    // traceloop.py:515
+    // assert device_id in self.devices, "device not registered"
+    bytec_0 // 0x6465766963655f
+    dig 1
+    concat
+    dup
+    box_len
+    bury 1
+    assert // device not registered
+    // traceloop.py:517
+    // record = self.devices[device_id].copy()
+    dup
+    box_get
+    pop
+    swap
+    // traceloop.py:517-518
+    // record = self.devices[device_id].copy()
+    // self._assert_not_terminal(record.state.native)
+    dup
+    intc_0 // 0
+    intc_3 // 8
+    box_extract // on error: index out of bounds
+    // traceloop.py:518
+    // self._assert_not_terminal(record.state.native)
+    btoi
+    callsub _assert_not_terminal
+    // traceloop.py:520
+    // record.state = arc4.UInt64(STATE_EXPORTED)
+    pushint 6
+    itob
+    uncover 2
+    swap
+    replace2 0
+    // traceloop.py:521
+    // record.updated_at = arc4.UInt64(Global.latest_timestamp)
+    global LatestTimestamp
+    itob
+    replace2 45
+    // traceloop.py:522
+    // self.devices[device_id] = record.copy()
+    dig 1
+    box_del
+    pop
+    box_put
+    // traceloop.py:527
+    // timestamp=arc4.UInt64(Global.latest_timestamp),
+    global LatestTimestamp
+    itob
+    // traceloop.py:525-528
+    // DeviceExported(
+    //     device_id=device_id,
+    //     timestamp=arc4.UInt64(Global.latest_timestamp),
+    // )
+    pushbytes 0x000a
+    swap
+    concat
+    swap
+    concat
+    // traceloop.py:524-529
+    // arc4.emit(
+    //     DeviceExported(
+    //         device_id=device_id,
+    //         timestamp=arc4.UInt64(Global.latest_timestamp),
+    //     )
+    // )
+    pushbytes 0x86a19f46 // method "DeviceExported(string,uint64)"
+    swap
+    concat
+    log
+    // traceloop.py:512
+    // @arc4.abimethod
+    intc_1 // 1
+    return
+
+
+// traceloop.TraceLoopLedger.get_device_state[routing]() -> void:
+get_device_state:
+    // traceloop.py:536
+    // @arc4.abimethod(readonly=True)
+    txna ApplicationArgs 1
+    dup
+    intc_0 // 0
+    extract_uint16 // on error: invalid array length header
+    intc_2 // 2
+    +
+    dig 1
+    len
+    ==
+    assert // invalid number of bytes for arc4.dynamic_array<arc4.uint8>
+    // traceloop.py:538
+    // assert device_id in self.devices, "device not registered"
+    bytec_0 // 0x6465766963655f
+    swap
+    concat
+    dup
+    box_len
+    bury 1
+    assert // device not registered
+    // traceloop.py:539
+    // return self.devices[device_id].copy()
+    box_get
+    pop
+    // traceloop.py:536
+    // @arc4.abimethod(readonly=True)
+    bytec_3 // 0x151f7c75
+    swap
+    concat
+    log
+    intc_1 // 1
+    return
+
+
+// traceloop.TraceLoopLedger.can_verify[routing]() -> void:
+can_verify:
+    pushbytes ""
+    // traceloop.py:541
+    // @arc4.abimethod(readonly=True)
+    txna ApplicationArgs 1
+    dup
+    intc_0 // 0
+    extract_uint16 // on error: invalid array length header
+    intc_2 // 2
+    +
+    dig 1
+    len
+    ==
+    assert // invalid number of bytes for arc4.dynamic_array<arc4.uint8>
+    // traceloop.py:543
+    // if device_id not in self.devices:
+    bytec_0 // 0x6465766963655f
+    swap
+    concat
+    dup
+    box_len
+    bury 1
+    bnz can_verify_after_if_else@3
+    // traceloop.py:544
+    // return arc4.Bool(False)  # noqa: FBT003
+    bytec_1 // 0x00
+
+can_verify_after_inlined_traceloop.TraceLoopLedger.can_verify@10:
+    // traceloop.py:541
+    // @arc4.abimethod(readonly=True)
+    bytec_3 // 0x151f7c75
+    swap
+    concat
+    log
+    intc_1 // 1
+    return
+
+can_verify_after_if_else@3:
+    // traceloop.py:545-546
+    // record = self.devices[device_id].copy()
+    // state = record.state.native
+    dup
+    intc_0 // 0
+    intc_3 // 8
+    box_extract // on error: index out of bounds
+    // traceloop.py:546
+    // state = record.state.native
+    btoi
+    dup
+    bury 3
+    // traceloop.py:548
+    // state == STATE_REGISTERED
+    intc_1 // 1
+    ==
+    // traceloop.py:548-550
+    // state == STATE_REGISTERED
+    // or state == STATE_TRANSFERRED
+    // or (state == STATE_VERIFIED and not record.stamp_valid.native)
+    bnz can_verify_bool_true@7
+    // traceloop.py:549
+    // or state == STATE_TRANSFERRED
+    dig 1
+    pushint 3
+    ==
+    // traceloop.py:548-550
+    // state == STATE_REGISTERED
+    // or state == STATE_TRANSFERRED
+    // or (state == STATE_VERIFIED and not record.stamp_valid.native)
+    bnz can_verify_bool_true@7
+    // traceloop.py:550
+    // or (state == STATE_VERIFIED and not record.stamp_valid.native)
+    dig 1
+    intc_2 // 2
+    ==
+    bz can_verify_bool_false@8
+    dup
+    pushint 12
+    intc_1 // 1
+    box_extract // on error: index out of bounds
+    intc_0 // 0
+    getbit
+    bytec_1 // 0x00
+    intc_0 // 0
+    uncover 2
+    setbit
+    intc_0 // 0
+    getbit
+    bnz can_verify_bool_false@8
+
+can_verify_bool_true@7:
+    intc_1 // 1
+
+can_verify_bool_merge@9:
+    // traceloop.py:552
+    // return arc4.Bool(ok)
+    bytec_1 // 0x00
+    intc_0 // 0
+    uncover 2
+    setbit
+    // traceloop.py:541
+    // @arc4.abimethod(readonly=True)
+    b can_verify_after_inlined_traceloop.TraceLoopLedger.can_verify@10
+
+can_verify_bool_false@8:
+    intc_0 // 0
+    b can_verify_bool_merge@9
+
+
+// traceloop.TraceLoopLedger.can_transfer[routing]() -> void:
+can_transfer:
+    // traceloop.py:554
+    // @arc4.abimethod(readonly=True)
+    txna ApplicationArgs 1
+    dup
+    intc_0 // 0
+    extract_uint16 // on error: invalid array length header
+    intc_2 // 2
+    +
+    dig 1
+    len
+    ==
+    assert // invalid number of bytes for arc4.dynamic_array<arc4.uint8>
+    // traceloop.py:556
+    // if device_id not in self.devices:
+    bytec_0 // 0x6465766963655f
+    swap
+    concat
+    dup
+    box_len
+    bury 1
+    bnz can_transfer_after_if_else@3
+    // traceloop.py:557
+    // return arc4.Bool(False)  # noqa: FBT003
+    bytec_1 // 0x00
+
+can_transfer_after_inlined_traceloop.TraceLoopLedger.can_transfer@8:
+    // traceloop.py:554
+    // @arc4.abimethod(readonly=True)
+    bytec_3 // 0x151f7c75
+    swap
+    concat
+    log
+    intc_1 // 1
+    return
+
+can_transfer_after_if_else@3:
+    // traceloop.py:560
+    // record.state.native == STATE_VERIFIED
+    dup
+    intc_0 // 0
+    intc_3 // 8
+    box_extract // on error: index out of bounds
+    btoi
+    intc_2 // 2
+    ==
+    // traceloop.py:560-561
+    // record.state.native == STATE_VERIFIED
+    // and record.stamp_valid.native
+    bz can_transfer_bool_false@6
+    // traceloop.py:561
+    // and record.stamp_valid.native
+    dup
+    pushint 12
+    intc_1 // 1
+    box_extract // on error: index out of bounds
+    intc_0 // 0
+    getbit
+    bytec_1 // 0x00
+    intc_0 // 0
+    uncover 2
+    setbit
+    intc_0 // 0
+    getbit
+    // traceloop.py:560-561
+    // record.state.native == STATE_VERIFIED
+    // and record.stamp_valid.native
+    bz can_transfer_bool_false@6
+    intc_1 // 1
+
+can_transfer_bool_merge@7:
+    // traceloop.py:563
+    // return arc4.Bool(ok)
+    bytec_1 // 0x00
+    intc_0 // 0
+    uncover 2
+    setbit
+    // traceloop.py:554
+    // @arc4.abimethod(readonly=True)
+    b can_transfer_after_inlined_traceloop.TraceLoopLedger.can_transfer@8
+
+can_transfer_bool_false@6:
+    intc_0 // 0
+    b can_transfer_bool_merge@7
+
+
+// traceloop.TraceLoopLedger.can_recycle[routing]() -> void:
+can_recycle:
+    // traceloop.py:565
+    // @arc4.abimethod(readonly=True)
+    txna ApplicationArgs 1
+    dup
+    intc_0 // 0
+    extract_uint16 // on error: invalid array length header
+    intc_2 // 2
+    +
+    dig 1
+    len
+    ==
+    assert // invalid number of bytes for arc4.dynamic_array<arc4.uint8>
+    // traceloop.py:567
+    // if device_id not in self.devices:
+    bytec_0 // 0x6465766963655f
+    swap
+    concat
+    dup
+    box_len
+    bury 1
+    bnz can_recycle_after_if_else@3
+    pop
+    // traceloop.py:568
+    // return arc4.Bool(False)  # noqa: FBT003
+    bytec_1 // 0x00
+
+can_recycle_after_inlined_traceloop.TraceLoopLedger.can_recycle@4:
+    // traceloop.py:565
+    // @arc4.abimethod(readonly=True)
+    bytec_3 // 0x151f7c75
+    swap
+    concat
+    log
+    intc_1 // 1
+    return
+
+can_recycle_after_if_else@3:
+    // traceloop.py:569-570
+    // record = self.devices[device_id].copy()
+    // ok = record.state.native == STATE_TRANSFERRED
+    intc_0 // 0
+    intc_3 // 8
+    box_extract // on error: index out of bounds
+    // traceloop.py:570
+    // ok = record.state.native == STATE_TRANSFERRED
+    btoi
+    pushint 3
+    ==
+    // traceloop.py:571
+    // return arc4.Bool(ok)
+    bytec_1 // 0x00
+    intc_0 // 0
+    uncover 2
+    setbit
+    // traceloop.py:565
+    // @arc4.abimethod(readonly=True)
+    b can_recycle_after_inlined_traceloop.TraceLoopLedger.can_recycle@4
+
+
+// traceloop.TraceLoopLedger._assert_operator() -> void:
+_assert_operator:
+    // traceloop.py:243
+    // assert Txn.sender == self.operator.value.native, "only operator"
+    txn Sender
+    bytec 4 // 0x6f70657261746f72
+    box_get
+    assert // check self.operator exists
+    ==
+    assert // only operator
+    retsub
+
+
+// traceloop.TraceLoopLedger._assert_verifier() -> void:
+_assert_verifier:
+    // traceloop.py:246
+    // assert arc4.Address(Txn.sender) in self.verifiers, "not an authorized verifier"
+    bytec_2 // 0x76657269666965725f
+    txn Sender
+    concat
+    box_len
+    bury 1
+    assert // not an authorized verifier
+    retsub
+
+
+// traceloop.TraceLoopLedger._assert_not_terminal(state: uint64) -> void:
+_assert_not_terminal:
+    // traceloop.py:251
+    // def _assert_not_terminal(self, state: UInt64) -> None:
+    proto 1 0
+    // traceloop.py:252
+    // assert state != STATE_RECYCLED, "device is recycled — terminal"
+    frame_dig -1
+    pushint 5
+    !=
+    assert // device is recycled — terminal
+    // traceloop.py:253
+    // assert state != STATE_EXPORTED, "device is exported — terminal"
+    frame_dig -1
+    pushint 6
+    !=
+    assert // device is exported — terminal
+    retsub
