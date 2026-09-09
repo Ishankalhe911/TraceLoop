@@ -47,6 +47,8 @@ def verify_device(device_id):
             profile_data["stamp_history"] or "[]"
         )
 
+        current_status = profile_data["status"]
+
         # Mock manufacturer database
         manufacturer_data = {
             "DLTEST001": {
@@ -128,7 +130,6 @@ def verify_device(device_id):
                 "Review documented hardware changes."
             )
 
-            # Device is not verified yet
             cursor.execute(
                 """
                 UPDATE device_profiles
@@ -148,33 +149,59 @@ def verify_device(device_id):
                 "Device configuration matches manufacturer records."
             )
 
-            # Create a new verification stamp
-            stamp = {
-                "stamp_id": f"STAMP-{device_id}-{len(stamp_history) + 1:04d}",
-                "device_id": device_id,
-                "verified_at": datetime.now(timezone.utc).isoformat(),
-                "verified_by": "VERIFIABLE",
-                "status": "VALID"
-            }
+            # Check whether a valid stamp already exists
+            valid_stamp = None
 
-            stamp_history.append(stamp)
+            for stamp in stamp_history:
+                if stamp.get("status") == "VALID":
+                    valid_stamp = stamp
+                    break
 
-            # Update profile
-            cursor.execute(
-                """
-                UPDATE device_profiles
-                SET status = ?,
-                    stamp_history = ?
-                WHERE device_id = ?
-                """,
-                (
-                    "VERIFIED",
-                    json.dumps(stamp_history),
-                    device_id
+            # Create a new stamp only when there is no valid stamp
+            if valid_stamp is None:
+
+                stamp = {
+                    "stamp_id": (
+                        f"STAMP-{device_id}-{len(stamp_history) + 1:04d}"
+                    ),
+                    "device_id": device_id,
+                    "verified_at": datetime.now(
+                        timezone.utc
+                    ).isoformat(),
+                    "verified_by": "VERIFIABLE",
+                    "status": "VALID"
+                }
+
+                stamp_history.append(stamp)
+
+                cursor.execute(
+                    """
+                    UPDATE device_profiles
+                    SET status = ?,
+                        stamp_history = ?
+                    WHERE device_id = ?
+                    """,
+                    (
+                        "VERIFIED",
+                        json.dumps(stamp_history),
+                        device_id
+                    )
                 )
-            )
 
-            conn.commit()
+                conn.commit()
+
+            elif current_status != "VERIFIED":
+
+                cursor.execute(
+                    """
+                    UPDATE device_profiles
+                    SET status = ?
+                    WHERE device_id = ?
+                    """,
+                    ("VERIFIED", device_id)
+                )
+
+                conn.commit()
 
         return {
             "code": 200,
