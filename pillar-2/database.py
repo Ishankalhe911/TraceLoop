@@ -11,6 +11,24 @@ def create_tables():
     connection = get_connection()
     cursor = connection.cursor()
 
+    # Device profiles - Pillar 3
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS device_profiles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            device_id TEXT UNIQUE NOT NULL,
+            serial_id TEXT NOT NULL,
+            brand TEXT NOT NULL,
+            original_config TEXT,
+            current_config TEXT,
+            change_log TEXT,
+            current_owner_hash TEXT,
+            status TEXT DEFAULT 'REGISTERED',
+            stamp_history TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (device_id) REFERENCES devices(device_id)
+        )
+    """)
+
     # Users table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (

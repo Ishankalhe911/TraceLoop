@@ -9,6 +9,11 @@ from routes.recycling_routes import recycling_bp
 from routes.certificate_routes import certificate_bp
 from routes.reward_routes import reward_bp
 
+# Pillar 3 routes
+from routes.device_profile_routes import device_profile_bp
+from routes.manufacturer_routes import manufacturer_bp
+from routes.verification_routes import verification_bp
+
 app = Flask(__name__)
 CORS(app)
 app.register_blueprint(device_bp)
@@ -18,6 +23,10 @@ app.register_blueprint(recycler_bp)
 app.register_blueprint(recycling_bp)
 app.register_blueprint(certificate_bp)
 app.register_blueprint(reward_bp)
+# Register Pillar 3 blueprints
+app.register_blueprint(device_profile_bp)
+app.register_blueprint(manufacturer_bp)
+app.register_blueprint(verification_bp)
 
 
 # Create database tables
