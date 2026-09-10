@@ -54,6 +54,13 @@ def declare_hardware_change(
     if not device:
         raise HTTPException(status_code=404, detail="Device not found.")
 
+    # Terminal state guard — checked first before any other business logic
+    if device.status in [DeviceStatus.RECYCLED, DeviceStatus.EXPORTED]:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot modify a terminal device. Device has been RECYCLED or EXPORTED."
+        )
+
     # 1. Authorization: Only the current owner can declare a change
     if device.current_owner_id != current_user.id:
         raise HTTPException(
@@ -84,7 +91,6 @@ def declare_hardware_change(
 
     try:
         # 5. Synchronous Blockchain Mutation (Pillar 1)
-        # Invalidates the stamp on-chain via PuyaPy contract
         chain_result = ledger_service.declare_hardware_change(
             device_id=device.id,
             new_config_hash=new_config_hash
@@ -92,8 +98,8 @@ def declare_hardware_change(
 
         # 6. Update PostgreSQL Device Profile (Pillar 3)
         device.current_config = updated_config
-        device.stamp_valid = False  # Explicitly invalidate the stamp[cite: 4, 7]
-        
+        device.stamp_valid = False
+
         # 7. Append to the Immutable Hardware Log (Pillar 3)
         log_entry = DeviceHardwareLog(
             device_id=device.id,
@@ -128,7 +134,7 @@ def get_hardware_log(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Fetches the append-only hardware change log for a device[cite: 7]."""
+    """Fetches the append-only hardware change log for a device."""
     device = db.query(Device).filter(Device.id == device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found.")
