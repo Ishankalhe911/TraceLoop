@@ -138,26 +138,55 @@ def upload_kyc_document(
     db: Session = Depends(get_db), 
     current_user: User = Depends(get_current_user)
 ):
-    """Logs KYC document uploads (Purchase Proofs, Business Proofs)[cite: 15]."""
+    """
+    Logs KYC document uploads and auto-activates specific roles.
+    Enforces SOP Section 1.2 document requirements.
+    """
+    # 1. Enforce Role-Specific Document Requirements
+    if current_user.role == UserRole.FIRST_BUYER and payload.doc_type != DocType.PURCHASE_PROOF:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, 
+            detail="FIRST_BUYER must upload a PURCHASE_PROOF."
+        )
+        
+    if current_user.role == UserRole.RESELLER and payload.doc_type != DocType.BUSINESS_PROOF:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, 
+            detail="RESELLER must upload a BUSINESS_PROOF."
+        )
+
     try:
+        # 2. Save the document
         new_doc = KYCDocument(
             user_id=current_user.id,
             doc_type=payload.doc_type,
             file_path="s3://mock-bucket/document.pdf",
             file_hash=payload.file_hash,
-            status=DocStatus.PENDING
+            # Hackathon MVP: Auto-accepting the document to streamline testing
+            status=DocStatus.ACCEPTED 
         )
         db.add(new_doc)
+        
+        # 3. Advance User Status to ACTIVE for specific roles[cite: 5, 7]
+        message = "Document uploaded successfully."
+        if current_user.role in [UserRole.FIRST_BUYER, UserRole.RESELLER]:
+            current_user.status = UserStatus.ACTIVE
+            message += " Account is now ACTIVE."
+        
         db.commit()
         
         return standard_response({
             "doc_id": new_doc.id,
-            "status": "Document uploaded successfully. Pending verification."
+            "new_status": current_user.status,
+            "message": message
         })
+        
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+            detail=f"Failed to process upload: {str(e)}"
+        )
 
 @router.get("/me")
 def get_my_profile(current_user: User = Depends(get_current_user)):
