@@ -1,39 +1,14 @@
-<!DOCTYPE html>
-<html lang="en">
-
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-    <title>TRACE-LOOP | Track Device</title>
-
-    <link rel="stylesheet" href="css/style.css">
-</head>
-
-<body>
-
-    <nav class="navbar">
-
-        <div class="logo">
-            <span>TRACE</span>-LOOP
-        </div>
-
-        <div class="nav-links">
-            <a href="index.html">Home</a>
-            <a href="dashboard.html">Dashboard</a>
-            <a href="register.html">Register</a>
-            <a href="track.html">Track</a>
-        </div>
-
-        <button class="nav-button">
-            My Account
-        </button>
-
-    </nav>
-
-
-    <main class="track-page">
-
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>TRACE-LOOP | Verify Passport</title><link rel="stylesheet" href="css/style.css"></head><body>
+<nav class="navbar"><a class="logo" href="index.html"><span>TRACE</span>-LOOP</a><div class="nav-links"><a href="index.html">Home</a><a href="dashboard.html">Dashboard</a><a href="register.html">Register</a><a class="active" href="track.html">Track</a><a href="transfer.html">Transfer</a><a href="recycling.html">Recycle</a></div><button class="nav-button" onclick="window.location.href='dashboard.html'">Command Center</button></nav>
+<main class="track-page track-v2"><div class="track-header"><span>DIGITAL PASSPORT VERIFICATION</span><h1>Verify a Device</h1><p>Search a TRACE-LOOP ID and inspect its identity, lifecycle state and cryptographic audit trail.</p></div>
+<section class="track-search search-v2"><label for="deviceId">TRACE-LOOP DEVICE ID</label><div class="search-box"><input type="text" id="deviceId" placeholder="e.g. TL000001" value="TL000001"><button class="primary-button" onclick="searchDevice()">Verify Passport →</button></div><div class="search-meta"><span>⌕ Try <button type="button" onclick="setDemoDevice('TL000001')">TL000001</button></span><span>● Demo verification available</span></div></section>
+<section class="device-result passport-result" id="deviceResult" style="display:block"><div class="result-header"><div><span>DIGITAL PRODUCT PASSPORT</span><h2 id="resultName">Dell Inspiron 15</h2><p>Device ID: <strong id="resultDeviceId">TL000001</strong></p></div><div class="active-status" id="resultStatus">● ACTIVE</div></div>
+<div class="passport-top-grid"><div class="passport-visual"><div class="big-device">💻</div><span>TRUST SCORE</span><strong id="trustScore">98/100</strong><small>Identity + lifecycle integrity</small></div><div class="track-details"><div><small>BRAND</small><strong id="resultBrand">Dell</strong></div><div><small>MODEL</small><strong id="resultModel">Inspiron 15</strong></div><div><small>DEVICE TYPE</small><strong id="resultType">Laptop</strong></div><div><small>STATUS</small><strong id="resultDeviceStatus">ACTIVE</strong></div><div><small>OWNER</small><strong>VERIFIED</strong></div><div><small>DATA CLASS</small><strong>DEVICE RECORD</strong></div></div></div>
+<div class="verification-banner"><div><span>🛡️ RECORD INTEGRITY</span><strong>Cryptographic chain verified</strong></div><code id="chainHash">computing...</code><button onclick="verifyIntegrity()">Verify again</button></div>
+<div class="history-heading"><div><span>LIFECYCLE LEDGER</span><h2>Complete Device Journey</h2></div><div class="verified-badge">✓ VERIFIED CHAIN</div></div>
+<div class="ledger" id="ledger"><div class="history-item"><div class="history-icon">✓</div><div class="history-content"><div class="history-top"><h3>Device Registered</h3><span>10 Jun 2026</span></div><p>Digital identity created and physical device linked to the passport.</p><div class="event-info">REGISTRATION • HASH #001</div></div></div><div class="history-item"><div class="history-icon">🔄</div><div class="history-content"><div class="history-top"><h3>Ownership Verified</h3><span>18 Jun 2026</span></div><p>Ownership event recorded without deleting the previous lifecycle history.</p><div class="event-info">TRANSFER • HASH #002</div></div></div><div class="history-item"><div class="history-icon">🛠️</div><div class="history-content"><div class="history-top"><h3>Refurbishment Check</h3><span>25 Jun 2026</span></div><p>Device condition updated for continued reuse.</p><div class="event-info">REFURBISHMENT • HASH #003</div></div></div><div class="history-item"><div class="history-icon">🔍</div><div class="history-content"><div class="history-top"><h3>Passport Verified</h3><span>Today</span></div><p>Current passport state and linked event history passed integrity verification.</p><div class="event-info">VERIFICATION • HASH #004</div></div></div></div>
+<div class="recycling-summary"><div><span>END-OF-LIFE STATUS</span><strong id="resultRecyclingStatus">Not completed</strong></div><div><span>RECYCLER</span><strong id="resultRecycler">Pending</strong></div><div><span>CERTIFICATE</span><strong id="resultCertificate">Not issued</strong></div></div>
+</section></main><script src="js/script.js"></script></body></html>
         <div class="track-header">
 
             <span>DEVICE TRACE</span>
