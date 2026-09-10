@@ -21,7 +21,7 @@ class LedgerService:
         
         # Harden ABI Path (Resolves absolute path regardless of cwd)
         base_dir = os.path.dirname(os.path.abspath(__file__))
-        default_abi_path = os.path.abspath(os.path.join(base_dir, "../../pillar-1/smart_contract/artifacts/contract.json"))
+        default_abi_path = os.path.abspath(os.path.join(base_dir, "../../smart_contract/artifacts/contract.json"))
         abi_path = os.getenv("ABI_PATH", default_abi_path)
         
         with open(abi_path, "r") as f:
