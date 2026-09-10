@@ -230,7 +230,7 @@ class LedgerEvent(Base):
     id = Column(String(36), primary_key=True) # Maps to on-chain UUID
     device_id = Column(String(40), ForeignKey("devices.id"), nullable=False)
     event_type = Column(String(20), nullable=False)
-    actor_id = Column(String(36), ForeignKey("users.id"), nullable=False)
+    actor_id = Column(String(36), ForeignKey("users.id"), nullable=True)
     actor_type = Column(String(20), nullable=False)
     
     tx_hash = Column(String(80), nullable=True, index=True)
