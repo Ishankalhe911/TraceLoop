@@ -1,419 +1,153 @@
-from flask import Blueprint, request
-from database import get_connection
+import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import datetime
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+from pydantic import BaseModel, Field
+from typing import Any
+
+# Import frozen models, RBAC, and Ledger Service
+from database import get_db, Device, DeviceHardwareLog, ChangeType, User, DeviceStatus
+from auth import get_current_user
+from services.ledger_service import ledger_service
+
+router = APIRouter(prefix="/device-profiles", tags=["Device Profiles"])
+
+def standard_response(data: dict = None, code: int = 200) -> dict:
+    """Mandatory API response envelope per SOP Section 4.1."""
+    return {
+        "status": "success",
+        "code": code,
+        "data": data or {},
+        "error": None,
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "traceloop_version": "v1"
+    }
+
+def generate_sha256(data: str) -> str:
+    """Enforces SHA-256 hashing for on-chain integrity."""
+    return hashlib.sha256(data.encode('utf-8')).hexdigest()
 
 
-device_profile_bp = Blueprint("device_profile", __name__)
+# --- PAYLOAD SCHEMAS ---
+class HardwareChangePayload(BaseModel):
+    component: str = Field(..., description="E.g., RAM, Storage, Battery")
+    change_type: ChangeType
+    old_spec: str = Field(None, description="Previous spec (if known)")
+    new_spec: str = Field(..., description="The newly installed spec")
 
 
-# ============================================================
-# CREATE DEVICE PROFILE
-# ============================================================
+# --- ROUTES ---
 
-@device_profile_bp.route("/device-profiles", methods=["POST"])
-def create_device_profile():
+@router.post("/{device_id}/hardware-change", status_code=status.HTTP_200_OK)
+def declare_hardware_change(
+    device_id: str,
+    payload: HardwareChangePayload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Logs a hardware upgrade/replacement.
+    Invalidates current stamp and updates the Algorand blockchain.
+    """
+    device = db.query(Device).filter(Device.id == device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found.")
 
-    data = request.get_json()
+    # 1. Authorization: Only the current owner can declare a change
+    if device.current_owner_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="Only the current device owner can declare hardware changes."
+        )
 
-    if not data:
-        return {
-            "code": 400,
-            "data": None,
-            "error": "Request body is required",
-            "status": "error"
-        }, 400
+    # 2. Hard Block: Cannot alter a disputed device (SOP Rule 6)
+    if device.status == DeviceStatus.DISPUTED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, 
+            detail="Hardware changes are blocked while the device is in a DISPUTED state."
+        )
 
-    required_fields = [
-        "device_id",
-        "serial_id",
-        "brand",
-        "original_config"
-    ]
+    # 3. Apply the hardware change to the current_config dictionary
+    updated_config = device.current_config.copy()
+    
+    # Case-insensitive key replacement (e.g., matching "ram" to "RAM")
+    existing_key = next((k for k in updated_config.keys() if k.lower() == payload.component.lower()), None)
+    if existing_key:
+        updated_config[existing_key] = payload.new_spec
+    else:
+        updated_config[payload.component] = payload.new_spec
 
-    for field in required_fields:
-        if field not in data:
-            return {
-                "code": 400,
-                "data": None,
-                "error": f"{field} is required",
-                "status": "error"
-            }, 400
-
-    device_id = data["device_id"]
-    serial_id = data["serial_id"]
-    brand = data["brand"]
-    original_config = data["original_config"]
-
-    conn = get_connection()
-    cursor = conn.cursor()
+    # 4. Hash the new configuration for the blockchain
+    config_str = json.dumps(updated_config, sort_keys=True)
+    new_config_hash = generate_sha256(config_str)
 
     try:
-
-        # Check whether device exists
-        cursor.execute(
-            "SELECT device_id FROM devices WHERE device_id = ?",
-            (device_id,)
+        # 5. Synchronous Blockchain Mutation (Pillar 1)
+        # Invalidates the stamp on-chain via PuyaPy contract
+        chain_result = ledger_service.declare_hardware_change(
+            device_id=device.id,
+            new_config_hash=new_config_hash
         )
 
-        device = cursor.fetchone()
-
-        if device is None:
-            return {
-                "code": 404,
-                "data": None,
-                "error": "Device not found",
-                "status": "error"
-            }, 404
-
-        # Check whether profile already exists
-        cursor.execute(
-            "SELECT device_id FROM device_profiles WHERE device_id = ?",
-            (device_id,)
+        # 6. Update PostgreSQL Device Profile (Pillar 3)
+        device.current_config = updated_config
+        device.stamp_valid = False  # Explicitly invalidate the stamp[cite: 4, 7]
+        
+        # 7. Append to the Immutable Hardware Log (Pillar 3)
+        log_entry = DeviceHardwareLog(
+            device_id=device.id,
+            component=payload.component,
+            change_type=payload.change_type,
+            old_spec=payload.old_spec,
+            new_spec=payload.new_spec,
+            declared_by=current_user.id,
+            stamp_invalidated=True
         )
+        db.add(log_entry)
+        db.commit()
 
-        existing_profile = cursor.fetchone()
-
-        if existing_profile is not None:
-            return {
-                "code": 409,
-                "data": None,
-                "error": "Device profile already exists",
-                "status": "error"
-            }, 409
-
-        current_config = original_config
-        change_log = []
-        stamp_history = []
-
-        cursor.execute(
-            """
-            INSERT INTO device_profiles
-            (
-                device_id,
-                serial_id,
-                brand,
-                original_config,
-                current_config,
-                change_log,
-                current_owner_hash,
-                status,
-                stamp_history
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                device_id,
-                serial_id,
-                brand,
-                json.dumps(original_config),
-                json.dumps(current_config),
-                json.dumps(change_log),
-                None,
-                "REGISTERED",
-                json.dumps(stamp_history)
-            )
-        )
-
-        conn.commit()
-
-        return {
-            "code": 201,
-            "data": {
-                "device_id": device_id,
-                "serial_id": serial_id,
-                "brand": brand,
-                "original_config": original_config,
-                "current_config": current_config,
-                "change_log": change_log,
-                "current_owner_hash": None,
-                "status": "REGISTERED",
-                "stamp_history": stamp_history
-            },
-            "error": None,
-            "status": "success"
-        }, 201
+        return standard_response({
+            "device_id": device.id,
+            "chain_tx_id": chain_result["tx_id"],
+            "stamp_valid": False,
+            "message": "Hardware change recorded on-chain. Re-verification required before next transfer."
+        })
 
     except Exception as e:
-
-        conn.rollback()
-
-        return {
-            "code": 500,
-            "data": None,
-            "error": str(e),
-            "status": "error"
-        }, 500
-
-    finally:
-
-        conn.close()
-
-
-# ============================================================
-# GET DEVICE PROFILE
-# ============================================================
-
-@device_profile_bp.route("/device-profiles/<device_id>", methods=["GET"])
-def get_device_profile(device_id):
-
-    conn = get_connection()
-    cursor = conn.cursor()
-
-    try:
-
-        cursor.execute(
-            """
-            SELECT *
-            FROM device_profiles
-            WHERE device_id = ?
-            """,
-            (device_id,)
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+            detail=f"Ledger hardware update failed: {str(e)}"
         )
 
-        profile = cursor.fetchone()
 
-        if profile is None:
-            return {
-                "code": 404,
-                "data": None,
-                "error": "Device profile not found",
-                "status": "error"
-            }, 404
+@router.get("/{device_id}/hardware-log")
+def get_hardware_log(
+    device_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Fetches the append-only hardware change log for a device[cite: 7]."""
+    device = db.query(Device).filter(Device.id == device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found.")
 
-        columns = [description[0] for description in cursor.description]
-        profile_data = dict(zip(columns, profile))
+    logs = db.query(DeviceHardwareLog).filter(
+        DeviceHardwareLog.device_id == device_id
+    ).order_by(DeviceHardwareLog.created_at.desc()).all()
 
-        # Convert JSON strings back into Python objects
-        for field in [
-            "original_config",
-            "current_config",
-            "change_log",
-            "stamp_history"
-        ]:
-            if profile_data[field]:
-                profile_data[field] = json.loads(profile_data[field])
-
-        return {
-            "code": 200,
-            "data": profile_data,
-            "error": None,
-            "status": "success"
-        }, 200
-
-    except Exception as e:
-
-        return {
-            "code": 500,
-            "data": None,
-            "error": str(e),
-            "status": "error"
-        }, 500
-
-    finally:
-
-        conn.close()
-
-
-# ============================================================
-# ADD HARDWARE CHANGE
-# ============================================================
-
-@device_profile_bp.route(
-    "/device-profiles/<device_id>/hardware-change",
-    methods=["POST"]
-)
-def add_hardware_change(device_id):
-
-    data = request.get_json()
-
-    if not data:
-        return {
-            "code": 400,
-            "data": None,
-            "error": "Request body is required",
-            "status": "error"
-        }, 400
-
-    required_fields = [
-        "component",
-        "change_type",
-        "declared_by",
-        "new_value"
-    ]
-
-    for field in required_fields:
-
-        if field not in data:
-
-            return {
-                "code": 400,
-                "data": None,
-                "error": f"{field} is required",
-                "status": "error"
-            }, 400
-
-    conn = get_connection()
-    cursor = conn.cursor()
-
-    try:
-
-        # --------------------------------------------------------
-        # Get device profile
-        # --------------------------------------------------------
-
-        cursor.execute(
-            """
-            SELECT *
-            FROM device_profiles
-            WHERE device_id = ?
-            """,
-            (device_id,)
-        )
-
-        profile = cursor.fetchone()
-
-        if profile is None:
-
-            return {
-                "code": 404,
-                "data": None,
-                "error": "Device profile not found",
-                "status": "error"
-            }, 404
-
-        columns = [description[0] for description in cursor.description]
-        profile_data = dict(zip(columns, profile))
-
-        # --------------------------------------------------------
-        # Read current configuration and change log
-        # --------------------------------------------------------
-
-        change_log = json.loads(
-            profile_data["change_log"] or "[]"
-        )
-
-        current_config = json.loads(
-            profile_data["current_config"] or "{}"
-        )
-
-        # --------------------------------------------------------
-        # Read request data
-        # --------------------------------------------------------
-
-        component = data["component"]
-        change_type = data["change_type"]
-        declared_by = data["declared_by"]
-        new_value = data["new_value"]
-
-        # --------------------------------------------------------
-        # Update existing component
-        # Case-insensitive matching
-        #
-        # Example:
-        # Existing key = "ram"
-        # Request = "RAM"
-        #
-        # Result:
-        # "ram": "32GB"
-        # --------------------------------------------------------
-
-        existing_key = None
-
-        for key in current_config:
-
-            if key.lower() == component.lower():
-
-                existing_key = key
-                break
-
-        if existing_key:
-
-            current_config[existing_key] = new_value
-
-        else:
-
-            current_config[component] = new_value
-
-        # --------------------------------------------------------
-        # Create hardware change log entry
-        # --------------------------------------------------------
-
-        change_entry = {
-            "component": component,
-            "change_type": change_type,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "declared_by": declared_by
-        }
-
-        change_log.append(change_entry)
-
-        # --------------------------------------------------------
-        # Read stamp history
-        # --------------------------------------------------------
-
-        stamp_history = json.loads(
-            profile_data["stamp_history"] or "[]"
-        )
-
-        # --------------------------------------------------------
-        # Hardware change invalidates previous verification stamp
-        # --------------------------------------------------------
-
-        if stamp_history:
-
-            stamp_history[-1]["valid"] = False
-
-        # --------------------------------------------------------
-        # Save updated information
-        # --------------------------------------------------------
-
-        cursor.execute(
-            """
-            UPDATE device_profiles
-            SET current_config = ?,
-                change_log = ?,
-                stamp_history = ?
-            WHERE device_id = ?
-            """,
-            (
-                json.dumps(current_config),
-                json.dumps(change_log),
-                json.dumps(stamp_history),
-                device_id
-            )
-        )
-
-        conn.commit()
-
-        # --------------------------------------------------------
-        # Response
-        # --------------------------------------------------------
-
-        return {
-            "code": 200,
-            "data": {
-                "device_id": device_id,
-                "current_config": current_config,
-                "change_log": change_log,
-                "stamp_history": stamp_history,
-                "message": "Hardware change recorded. Re-verification required."
-            },
-            "error": None,
-            "status": "success"
-        }, 200
-
-    except Exception as e:
-
-        conn.rollback()
-
-        return {
-            "code": 500,
-            "data": None,
-            "error": str(e),
-            "status": "error"
-        }, 500
-
-    finally:
-
-        conn.close()
+    return standard_response({
+        "device_id": device_id,
+        "current_config": device.current_config,
+        "hardware_log": [
+            {
+                "log_id": log.id,
+                "component": log.component,
+                "change_type": log.change_type,
+                "old_spec": log.old_spec,
+                "new_spec": log.new_spec,
+                "declared_at": log.created_at.isoformat() + "Z"
+            } for log in logs
+        ]
+    })
