@@ -1,418 +1,152 @@
-from services.ledger_service import create_ledger_entry
-from services.subscriber_service import notify_subscribers, log_event
+from datetime import datetime
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+from pydantic import BaseModel
 
-from flask import Blueprint, request
-from database import get_connection
+# Import frozen models, RBAC, and Ledger Service
+from database import (
+    get_db, Device, DeviceStatus, User, UserRole, 
+    RecyclingRecord, RecyclingStatus
+)
+from auth import RequireRole, get_current_user
+from services.ledger_service import ledger_service
 
-recycling_bp = Blueprint("recycling", __name__)
+router = APIRouter(prefix="/recycling", tags=["Recycling"])
 
+def standard_response(data: dict = None, code: int = 200) -> dict:
+    """Mandatory API response envelope per SOP Section 4.1."""
+    return {
+        "status": "success",
+        "code": code,
+        "data": data or {},
+        "error": None,
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "traceloop_version": "v1"
+    }
 
-@recycling_bp.route("/devices/<device_id>/recycle", methods=["POST"])
-def send_to_recycler(device_id):
-    data = request.get_json()
+# --- PAYLOAD SCHEMAS ---
+class ReceiveDevicePayload(BaseModel):
+    device_id: str
+    condition_notes: str = None
 
-    if not data or "recycler_id" not in data:
-        return {
-            "status": "error",
-            "code": 400,
-            "data": None,
-            "error": "recycler_id is required"
-        }, 400
+class CompleteRecyclingPayload(BaseModel):
+    device_id: str
+
+# --- ROUTES ---
+
+@router.post("/receive", status_code=status.HTTP_200_OK)
+def receive_device(
+    payload: ReceiveDevicePayload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(RequireRole([UserRole.RECYCLER]))
+):
+    """
+    Step 1: Recycler acknowledges physical receipt of the device.
+    Purely off-chain logistical tracking. Does NOT mutate the blockchain[cite: 7].
+    """
+    device = db.query(Device).filter(Device.id == payload.device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found.")
+
+    # Security Check: The device must have been legally transferred to this specific recycler
+    if device.current_owner_id != current_user.id or device.status != DeviceStatus.TRANSFERRED:
+        raise HTTPException(
+            status_code=403, 
+            detail="Device has not been officially transferred to your facility via the verification network."
+        )
 
     try:
-        connection = get_connection()
-        cursor = connection.cursor()
+        # Check if record exists, otherwise create it
+        record = db.query(RecyclingRecord).filter(
+            RecyclingRecord.device_id == device.id,
+            RecyclingRecord.recycler_id == current_user.id
+        ).first()
 
-        cursor.execute(
-            """
-            SELECT current_owner_id, status
-            FROM devices
-            WHERE device_id = ?
-            """,
-            (device_id,)
-        )
-
-        device = cursor.fetchone()
-
-        if not device:
-            connection.close()
-            return {
-                "status": "error",
-                "code": 404,
-                "data": None,
-                "error": "Device not found"
-            }, 404
-
-        current_owner_id = device[0]
-        current_status = device[1]
-
-        if current_owner_id is None:
-            connection.close()
-            return {
-                "status": "error",
-                "code": 400,
-                "data": None,
-                "error": "Device does not have an owner"
-            }, 400
-
-        if current_status in [
-            "SENT_TO_RECYCLER",
-            "RECEIVED_BY_RECYCLER",
-            "PROCESSING",
-            "RECYCLED"
-        ]:
-            connection.close()
-            return {
-                "status": "error",
-                "code": 409,
-                "data": None,
-                "error": "Device is already in the recycling process"
-            }, 409
-
-        cursor.execute(
-            """
-            SELECT id, verification_status
-            FROM recyclers
-            WHERE id = ?
-            """,
-            (data["recycler_id"],)
-        )
-
-        recycler = cursor.fetchone()
-
-        if not recycler:
-            connection.close()
-            return {
-                "status": "error",
-                "code": 404,
-                "data": None,
-                "error": "Recycler not found"
-            }, 404
-
-        if recycler[1] != "VERIFIED":
-            connection.close()
-            return {
-                "status": "error",
-                "code": 403,
-                "data": None,
-                "error": "Recycler is not verified"
-            }, 403
-
-        cursor.execute(
-            """
-            UPDATE devices
-            SET status = 'SENT_TO_RECYCLER'
-            WHERE device_id = ?
-            """,
-            (device_id,)
-        )
-
-        cursor.execute(
-            """
-            INSERT INTO recycling_records
-            (
-                device_id,
-                recycler_id,
-                recycling_status
+        if not record:
+            record = RecyclingRecord(
+                device_id=device.id,
+                recycler_id=current_user.id,
+                recycling_status=RecyclingStatus.RECEIVED,
+                received_date=datetime.utcnow()
             )
-            VALUES (?, ?, ?)
-            """,
-            (
-                device_id,
-                data["recycler_id"],
-                "SENT"
-            )
-        )
-        connection.commit()
-        connection.close()
-        return {
-            "status": "success",
-            "code": 200,
-            "data": {
-                "device_id": device_id,
-                "recycler_id": data["recycler_id"],
-                "status": "SENT_TO_RECYCLER"
-            },
-            "error": None
-        }
+            db.add(record)
+        else:
+            record.recycling_status = RecyclingStatus.RECEIVED
+            record.received_date = datetime.utcnow()
+
+        db.commit()
+
+        return standard_response({
+            "device_id": device.id,
+            "logistical_status": record.recycling_status,
+            "message": "Physical receipt logged. Ready for recycling processing."
+        })
 
     except Exception as e:
-        return {
-            "status": "error",
-            "code": 500,
-            "data": None,
-            "error": str(e)
-        }, 500
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@recycling_bp.route("/devices/<device_id>/receive", methods=["POST"])
-def receive_device(device_id):
-    data = request.get_json()
+@router.post("/complete", status_code=status.HTTP_200_OK)
+def complete_recycling(
+    payload: CompleteRecyclingPayload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(RequireRole([UserRole.RECYCLER]))
+):
+    """
+    Step 2: Recycler permanently terminates the device.
+    Executes a synchronous call to Algorand to burn the device state to RECYCLED[cite: 4, 7].
+    Generates the CPCB-compliant destruction certificate.
+    """
+    device = db.query(Device).filter(Device.id == payload.device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found.")
 
-    if not data or "recycler_id" not in data:
-        return {
-            "status": "error",
-            "code": 400,
-            "data": None,
-            "error": "recycler_id is required"
-        }, 400
+    # Hard Block: SOP requires the device to be freshly TRANSFERRED
+    if device.status != DeviceStatus.TRANSFERRED:
+        raise HTTPException(
+            status_code=409, 
+            detail=f"Device must be in TRANSFERRED state to be recycled. Current state: {device.status}"
+        )
+
+    record = db.query(RecyclingRecord).filter(
+        RecyclingRecord.device_id == device.id,
+        RecyclingRecord.recycler_id == current_user.id
+    ).first()
+
+    if not record or record.recycling_status == RecyclingStatus.RECYCLED:
+        raise HTTPException(status_code=400, detail="Invalid recycling record state or already recycled.")
 
     try:
-        connection = get_connection()
-        cursor = connection.cursor()
+        # 1. Generate compliant Certificate ID
+        cert_count = db.query(RecyclingRecord).filter(RecyclingRecord.certificate_id.isnot(None)).count()
+        certificate_id = f"TRC-CERT-{cert_count + 1:05d}"
 
-        cursor.execute(
-            """
-            SELECT status
-            FROM devices
-            WHERE device_id = ?
-            """,
-            (device_id,)
-        )
+        # 2. Synchronous Blockchain Mutation (Pillar 1)
+        # Executes ARC-4 App call to officially terminate the device lifecycle
+        chain_result = ledger_service.mark_recycled(device_id=device.id)
 
-        device = cursor.fetchone()
+        # 3. Web2 Database Updates (Terminal State)
+        device.status = DeviceStatus.RECYCLED
+        device.stamp_valid = False  # Ensure it can never be verified again[cite: 4, 7]
+        
+        record.recycling_status = RecyclingStatus.RECYCLED
+        record.certificate_id = certificate_id
+        record.completion_date = datetime.utcnow()
 
-        if not device:
-            connection.close()
-            return {
-                "status": "error",
-                "code": 404,
-                "data": None,
-                "error": "Device not found"
-            }, 404
+        db.commit()
 
-        if device[0] != "SENT_TO_RECYCLER":
-            connection.close()
-            return {
-                "status": "error",
-                "code": 400,
-                "data": None,
-                "error": "Device is not waiting for recycler receipt"
-            }, 400
-
-        cursor.execute(
-            """
-            SELECT verification_status
-            FROM recyclers
-            WHERE id = ?
-            """,
-            (data["recycler_id"],)
-        )
-
-        recycler = cursor.fetchone()
-
-        if not recycler:
-            connection.close()
-            return {
-                "status": "error",
-                "code": 404,
-                "data": None,
-                "error": "Recycler not found"
-            }, 404
-
-        if recycler[0] != "VERIFIED":
-            connection.close()
-            return {
-                "status": "error",
-                "code": 403,
-                "data": None,
-                "error": "Recycler is not verified"
-            }, 403
-
-        cursor.execute(
-            """
-            UPDATE devices
-            SET status = 'RECEIVED_BY_RECYCLER'
-            WHERE device_id = ?
-            """,
-            (device_id,)
-        )
-
-        cursor.execute(
-            """
-            UPDATE recycling_records
-            SET recycling_status = 'RECEIVED',
-                received_date = CURRENT_TIMESTAMP
-            WHERE device_id = ?
-              AND recycler_id = ?
-            """,
-            (
-                device_id,
-                data["recycler_id"]
-            )
-        )
-
-        connection.commit()
-        connection.close()
-
-        return {
-            "status": "success",
-            "code": 200,
-            "data": {
-                "device_id": device_id,
-                "recycler_id": data["recycler_id"],
-                "status": "RECEIVED_BY_RECYCLER"
-            },
-            "error": None
-        }
+        return standard_response({
+            "device_id": device.id,
+            "status": "RECYCLED",
+            "certificate_id": certificate_id,
+            "chain_tx_id": chain_result["tx_id"],
+            "message": "Device successfully terminated on the blockchain and E-Waste certificate generated."
+        })
 
     except Exception as e:
-        return {
-            "status": "error",
-            "code": 500,
-            "data": None,
-            "error": str(e)
-        }, 500
-
-
-@recycling_bp.route("/devices/<device_id>/complete-recycling", methods=["POST"])
-def complete_recycling(device_id):
-    data = request.get_json()
-
-    if not data or "recycler_id" not in data:
-        return {
-            "status": "error",
-            "code": 400,
-            "data": None,
-            "error": "recycler_id is required"
-        }, 400
-
-    try:
-        connection = get_connection()
-        cursor = connection.cursor()
-
-        cursor.execute(
-            """
-            SELECT status
-            FROM devices
-            WHERE device_id = ?
-            """,
-            (device_id,)
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+            detail=f"Ledger termination failed: {str(e)}"
         )
-
-        device = cursor.fetchone()
-
-        if not device:
-            connection.close()
-            return {
-                "status": "error",
-                "code": 404,
-                "data": None,
-                "error": "Device not found"
-            }, 404
-
-        if device[0] != "RECEIVED_BY_RECYCLER":
-            connection.close()
-            return {
-                "status": "error",
-                "code": 400,
-                "data": None,
-                "error": "Device has not been received by recycler"
-            }, 400
-
-        cursor.execute(
-            """
-            SELECT verification_status
-            FROM recyclers
-            WHERE id = ?
-            """,
-            (data["recycler_id"],)
-        )
-
-        recycler = cursor.fetchone()
-
-        if not recycler:
-            connection.close()
-            return {
-                "status": "error",
-                "code": 404,
-                "data": None,
-                "error": "Recycler not found"
-            }, 404
-
-        if recycler[0] != "VERIFIED":
-            connection.close()
-            return {
-                "status": "error",
-                "code": 403,
-                "data": None,
-                "error": "Recycler is not verified"
-            }, 403
-
-        cursor.execute(
-            """
-            SELECT COUNT(*) FROM recycling_records
-            """
-        )
-
-        count = cursor.fetchone()[0] + 1
-
-        certificate_id = f"TRC-CERT-{count:05d}"
-
-        cursor.execute(
-            """
-            UPDATE devices
-            SET status = 'RECYCLED'
-            WHERE device_id = ?
-            """,
-            (device_id,)
-        )
-
-        cursor.execute(
-            """
-            UPDATE recycling_records
-            SET recycling_status = 'RECYCLED',
-                completion_date = CURRENT_TIMESTAMP,
-                certificate_id = ?
-            WHERE device_id = ?
-              AND recycler_id = ?
-            """,
-            (
-                certificate_id,
-                device_id,
-                data["recycler_id"]
-            )
-        )
-
-        connection.commit()
-
-        # Create ledger entry for completed recycling
-        ledger_entry = create_ledger_entry(
-            "DEVICE_RECYCLED",
-            device_id,
-            {
-                "certificate_id": certificate_id,
-                "recycler_id": data["recycler_id"]
-            }
-        )
-        subscriber_notifications = notify_subscribers(
-            "DEVICE_RECYCLED",
-            {
-                "device_id": device_id,
-                "certificate_id": certificate_id,
-                "recycler_id": data["recycler_id"]
-            }
-        )
-        connection.close()
-
-        return {
-            "status": "success",
-            "code": 200,
-            "data": {
-                "device_id": device_id,
-                "recycler_id": data["recycler_id"],
-                "status": "RECYCLED",
-                "certificate_id": certificate_id,
-                "ledger_entry": ledger_entry,
-                "subscriber_notifications": subscriber_notifications
-            },
-            "error": None
-        }
-
-    except Exception as e:
-        return {
-            "status": "error",
-            "code": 500,
-            "data": None,
-            "error": str(e)
-        }, 500
