@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>TRACE-LOOP | Dashboard</title>
+
+    <link rel="stylesheet" href="css/style.css">
+</head>
+
+<body>
+
+    <!-- Navigation -->
+    <nav class="navbar">
+
+        <div class="logo">
+            <span>TRACE</span>-LOOP
+        </div>
+
+        <div class="nav-links">
+            <a href="index.html">Home</a>
+            <a href="dashboard.html">Dashboard</a>
+            <a href="#">Devices</a>
+            <a href="#">Lifecycle</a>
+        </div>
+
+        <button class="nav-button">
+            My Account
+        </button>
+
+    </nav>
+
+
+    <!-- Dashboard -->
+    <main class="dashboard">
+
+        <div class="dashboard-header">
+
+            <div>
+                <span class="dashboard-label">TRACE-LOOP</span>
+
+                <h1>Dashboard</h1>
+
+                <p>
+                    Monitor and manage your laptop lifecycle records.
+                </p>
+            </div>
+
+            <button class="primary-button"
+                    onclick="window.location.href='register.html'">
+                + Register Laptop
+            </button>
+
+        </div>
+
+
+        <!-- Statistics -->
+        <div class="stats-grid">
+
+            <div class="stat-card">
+                <span class="stat-icon">💻</span>
+                <p>Total Devices</p>
+                <h2>12</h2>
+                <small>Registered devices</small>
+            </div>
+
+            <div class="stat-card">
+                <span class="stat-icon">🔄</span>
+                <p>Transfers</p>
+                <h2>7</h2>
+                <small>Verified transfers</small>
+            </div>
+
+            <div class="stat-card">
+                <span class="stat-icon">🔧</span>
+                <p>Active Devices</p>
+                <h2>9</h2>
+                <small>Currently in lifecycle</small>
+            </div>
+
+            <div class="stat-card">
+                <span class="stat-icon">♻️</span>
+                <p>Recycled</p>
+                <h2>3</h2>
+                <small>Lifecycle completed</small>
+            </div>
+
+        </div>
+
+
+        <!-- Main Dashboard Content -->
+        <div class="dashboard-grid">
+
+
+            <!-- Recent Devices -->
+            <section class="dashboard-card">
+
+                <div class="card-heading">
+
+                    <div>
+                        <span>DEVICES</span>
+                        <h2>Recent Devices</h2>
+                    </div>
+
+                    <a href="#">View all →</a>
+
+                </div>
+
+
+                <div class="device-row">
+
+                    <div class="device-symbol">
+                        💻
+                    </div>
+
+                    <div class="device-details">
+                        <strong>Dell Inspiron</strong>
+                        <small>TL000001</small>
+                    </div>
+
+                    <span class="device-status">
+                        REGISTERED
+                    </span>
+
+                </div>
+
+
+                <div class="device-row">
+
+                    <div class="device-symbol">
+                        💻
+                    </div>
+
+                    <div class="device-details">
+                        <strong>HP Pavilion</strong>
+                        <small>TL000002</small>
+                    </div>
+
+                    <span class="device-status">
+                        ACTIVE
+                    </span>
+
+                </div>
+
+
+                <div class="device-row">
+
+                    <div class="device-symbol">
+                        💻
+                    </div>
+
+                    <div class="device-details">
+                        <strong>Lenovo ThinkPad</strong>
+                        <small>TL000003</small>
+                    </div>
+
+                    <span class="device-status">
+                        TRANSFERRED
+                    </span>
+
+                </div>
+
+            </section>
+
+
+            <!-- Quick Actions -->
+            <section class="dashboard-card">
+
+                <div class="card-heading">
+
+                    <div>
+                        <span>ACTIONS</span>
+                        <h2>Quick Actions</h2>
+                    </div>
+
+                </div>
+
+
+                <button class="action-button"
+                        onclick="window.location.href='register.html'">
+
+                    <span>💻</span>
+
+                    <div>
+                        <strong>Register Laptop</strong>
+                        <small>Add a new device</small>
+                    </div>
+
+                    <b>→</b>
+
+                </button>
+
+
+                <button class="action-button"
+                        onclick="trackDevice()">
+
+                    <span>🔍</span>
+
+                    <div>
+                        <strong>Track Device</strong>
+                        <small>View lifecycle history</small>
+                    </div>
+
+                    <b>→</b>
+
+                </button>
+
+
+                <button class="action-button">
+
+                    <span>🔄</span>
+
+                    <div>
+                        <strong>Transfer Device</strong>
+                        <small>Record ownership transfer</small>
+                    </div>
+
+                    <b>→</b>
+
+                </button>
+                <button class="action-button"
+        onclick="window.location.href='recycling.html'">
+
+    <span>♻️</span>
+
+    <div>
+        <strong>Recycle Device</strong>
+        <small>Send device to verified recycler</small>
+    </div>
+
+    <b>→</b>
+
+</button>
+
+            </section>
+
+        </div>
+
+
+        <!-- Lifecycle -->
+        <section class="lifecycle-card">
+
+            <div class="card-heading">
+
+                <div>
+                    <span>LIFECYCLE OVERVIEW</span>
+
+                    <h2>
+                        Device Lifecycle
+                    </h2>
+                </div>
+
+                <span class="verified-badge">
+                    ✓ Verified System
+                </span>
+
+            </div>
+
+
+            <div class="lifecycle-flow">
+
+                <div class="lifecycle-step active">
+                    <div>01</div>
+                    <strong>Registered</strong>
+                    <small>12 devices</small>
+                </div>
+
+                <div class="flow-line"></div>
+
+                <div class="lifecycle-step">
+                    <div>02</div>
+                    <strong>Transferred</strong>
+                    <small>7 devices</small>
+                </div>
+
+                <div class="flow-line"></div>
+
+                <div class="lifecycle-step">
+                    <div>03</div>
+                    <strong>Refurbished</strong>
+                    <small>4 devices</small>
+                </div>
+
+                <div class="flow-line"></div>
+
+                <div class="lifecycle-step">
+                    <div>04</div>
+                    <strong>Recycled</strong>
+                    <small>3 devices</small>
+                </div>
+
+            </div>
+
+        </section>
+
+    </main>
+
+
+    <script src="js/script.js"></script>
+
+</body>
+</html>

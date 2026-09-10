@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>TRACE-LOOP | Track Device</title>
+
+    <link rel="stylesheet" href="css/style.css">
+</head>
+
+<body>
+
+    <nav class="navbar">
+
+        <div class="logo">
+            <span>TRACE</span>-LOOP
+        </div>
+
+        <div class="nav-links">
+            <a href="index.html">Home</a>
+            <a href="dashboard.html">Dashboard</a>
+            <a href="register.html">Register</a>
+            <a href="track.html">Track</a>
+        </div>
+
+        <button class="nav-button">
+            My Account
+        </button>
+
+    </nav>
+
+
+    <main class="track-page">
+
+        <div class="track-header">
+
+            <span>DEVICE TRACE</span>
+
+            <h1>Track Your Laptop</h1>
+
+            <p>
+                Enter a TRACE-LOOP Device ID to view its
+                complete lifecycle history.
+            </p>
+
+        </div>
+
+
+        <!-- SEARCH -->
+
+        <section class="track-search">
+
+            <label for="deviceId">
+                TRACE-LOOP DEVICE ID
+            </label>
+
+            <div class="search-box">
+
+                <input
+                    type="text"
+                    id="deviceId"
+                    placeholder="e.g. TL000001"
+                >
+
+                <button
+                    class="primary-button"
+                    onclick="searchDevice()">
+
+                    Track Device →
+
+                </button>
+
+            </div>
+
+            <small>
+                Try the demo Device ID: TL000001
+            </small>
+
+        </section>
+
+
+        <!-- DEVICE RESULT -->
+
+        <section
+            class="device-result"
+            id="deviceResult"
+            style="display: none;"
+        >
+
+            <div class="result-header">
+
+                <div>
+
+                    <span>DEVICE PASSPORT</span>
+
+                    <h2 id="resultName">
+                        Laptop
+                    </h2>
+
+                    <p>
+                        Device ID:
+                        <strong id="resultDeviceId"></strong>
+                    </p>
+
+                </div>
+
+                <div
+                    class="active-status"
+                    id="resultStatus"
+                >
+                    ● REGISTERED
+                </div>
+
+            </div>
+
+
+            <!-- DEVICE DETAILS -->
+
+            <div class="track-details">
+
+                <div>
+                    <small>BRAND</small>
+                    <strong id="resultBrand"></strong>
+                </div>
+
+                <div>
+                    <small>MODEL</small>
+                    <strong id="resultModel"></strong>
+                </div>
+
+                <div>
+                    <small>DEVICE TYPE</small>
+                    <strong id="resultType"></strong>
+                </div>
+
+                <div>
+                    <small>STATUS</small>
+                    <strong id="resultDeviceStatus"></strong>
+                </div>
+
+            </div>
+
+
+            <!-- RECYCLING INFORMATION -->
+
+            <div class="history-heading">
+
+                <div>
+
+                    <span>RECYCLING INFORMATION</span>
+
+                    <h2>
+                        Final Lifecycle Stage
+                    </h2>
+
+                </div>
+
+                <div class="verified-badge">
+                    ✓ Verified Record
+                </div>
+
+            </div>
+
+
+            <div class="track-details">
+
+                <div>
+
+                    <small>RECYCLER</small>
+
+                    <strong id="resultRecycler">
+                        —
+                    </strong>
+
+                </div>
+
+                <div>
+
+                    <small>RECYCLING STATUS</small>
+
+                    <strong id="resultRecyclingStatus">
+                        —
+                    </strong>
+
+                </div>
+
+                <div>
+
+                    <small>CERTIFICATE ID</small>
+
+                    <strong id="resultCertificate">
+                        —
+                    </strong>
+
+                </div>
+
+            </div>
+
+
+            <!-- LIFECYCLE HISTORY -->
+
+            <div class="history-heading">
+
+                <div>
+
+                    <span>LIFECYCLE HISTORY</span>
+
+                    <h2>
+                        Device Journey
+                    </h2>
+
+                </div>
+
+            </div>
+
+
+            <div class="history">
+
+
+                <!-- REGISTRATION -->
+
+                <div class="history-item">
+
+                    <div class="history-icon">
+                        ✓
+                    </div>
+
+                    <div class="history-content">
+
+                        <div class="history-top">
+
+                            <h3>
+                                Device Registered
+                            </h3>
+
+                        </div>
+
+                        <p>
+                            Laptop identity was created and
+                            added to the TRACE-LOOP system.
+                        </p>
+
+                        <div class="event-info">
+                            Event: REGISTRATION
+                        </div>
+
+                    </div>
+
+                </div>
+
+
+                <!-- OWNERSHIP -->
+
+                <div class="history-item">
+
+                    <div class="history-icon">
+                        🔄
+                    </div>
+
+                    <div class="history-content">
+
+                        <div class="history-top">
+
+                            <h3>
+                                Ownership History
+                            </h3>
+
+                        </div>
+
+                        <p>
+                            Ownership transfers are recorded
+                            in the TRACE-LOOP ownership history.
+                        </p>
+
+                        <div class="event-info">
+                            Event: OWNERSHIP
+                        </div>
+
+                    </div>
+
+                </div>
+
+
+                <!-- RECYCLING -->
+
+                <div class="history-item">
+
+                    <div class="history-icon">
+                        ♻️
+                    </div>
+
+                    <div class="history-content">
+
+                        <div class="history-top">
+
+                            <h3>
+                                Authorized Recycling
+                            </h3>
+
+                        </div>
+
+                        <p>
+                            The device recycling status and
+                            certificate are recorded by the
+                            authorized recycler.
+                        </p>
+
+                        <div class="event-info">
+                            Event: RECYCLING
+                        </div>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+        </section>
+
+    </main>
+
+
+    <script src="js/script.js"></script>
+
+</body>
+
+</html>

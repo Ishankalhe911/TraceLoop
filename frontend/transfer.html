@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>TRACE-LOOP | Transfer Device</title>
+
+    <link rel="stylesheet" href="css/style.css">
+</head>
+
+<body>
+
+    <nav class="navbar">
+
+        <div class="logo">
+            <span>TRACE</span>-LOOP
+        </div>
+
+        <div class="nav-links">
+            <a href="index.html">Home</a>
+            <a href="dashboard.html">Dashboard</a>
+            <a href="register.html">Register</a>
+            <a href="track.html">Track</a>
+            <a href="transfer.html">Transfer</a>
+        </div>
+
+        <button class="nav-button">
+            My Account
+        </button>
+
+    </nav>
+
+
+    <main class="transfer-page">
+
+        <div class="transfer-header">
+
+            <span>OWNERSHIP TRANSFER</span>
+
+            <h1>Transfer Device</h1>
+
+            <p>
+                Record a verified transfer of a laptop to a new owner
+                while maintaining its complete lifecycle history.
+            </p>
+
+        </div>
+
+
+        <div class="transfer-container">
+
+            <!-- Transfer Form -->
+
+            <section class="form-card">
+
+                <div class="form-title">
+
+                    <div class="form-number">
+                        01
+                    </div>
+
+                    <div>
+                        <h2>Device Information</h2>
+
+                        <p>
+                            Identify the laptop being transferred.
+                        </p>
+                    </div>
+
+                </div>
+
+
+                <form id="transferForm">
+
+                    <div class="form-group">
+
+                        <label for="transferDeviceId">
+                            TRACE-LOOP DEVICE ID
+                        </label>
+
+                        <input
+                            type="text"
+                            id="transferDeviceId"
+                            placeholder="e.g. TL000001"
+                            required
+                        >
+
+                    </div>
+
+
+                    <div class="device-preview">
+
+                        <div class="preview-icon">
+                            💻
+                        </div>
+
+                        <div>
+                            <small>DEVICE</small>
+                            <strong>Dell Inspiron</strong>
+                            <span>TL000001 • ACTIVE</span>
+                        </div>
+
+                    </div>
+
+
+                    <div class="form-divider"></div>
+
+
+                    <div class="form-title">
+
+                        <div class="form-number">
+                            02
+                        </div>
+
+                        <div>
+                            <h2>Transfer Information</h2>
+
+                            <p>
+                                Enter the sender and receiver details.
+                            </p>
+                        </div>
+
+                    </div>
+
+
+                    <div class="form-group">
+
+                        <label for="fromUser">
+                            Current Owner
+                        </label>
+
+                        <input
+                            type="text"
+                            id="fromUser"
+                            placeholder="Current owner ID"
+                            required
+                        >
+
+                    </div>
+
+
+                    <div class="transfer-arrow">
+                        ↓
+                    </div>
+
+
+                    <div class="form-group">
+
+                        <label for="toUser">
+                            New Owner
+                        </label>
+
+                        <input
+                            type="text"
+                            id="toUser"
+                            placeholder="New owner ID"
+                            required
+                        >
+
+                    </div>
+
+
+                    <div class="form-group">
+
+                        <label for="transferReason">
+                            Transfer Reason
+                        </label>
+
+                        <select id="transferReason">
+
+                            <option value="">
+                                Select reason
+                            </option>
+
+                            <option value="Resale">
+                                Resale
+                            </option>
+
+                            <option value="Gift">
+                                Gift
+                            </option>
+
+                            <option value="Organization Transfer">
+                                Organization Transfer
+                            </option>
+
+                            <option value="Other">
+                                Other
+                            </option>
+
+                        </select>
+
+                    </div>
+
+
+                    <div class="consent-box">
+
+                        <input
+                            type="checkbox"
+                            id="consent"
+                            required
+                        >
+
+                        <label for="consent">
+                            I confirm that this ownership transfer
+                            has been verified and authorized.
+                        </label>
+
+                    </div>
+
+
+                    <div class="form-actions">
+
+                        <button
+                            type="button"
+                            class="cancel-button"
+                            onclick="window.location.href='dashboard.html'">
+
+                            Cancel
+
+                        </button>
+
+                        <button
+                            type="submit"
+                            class="primary-button">
+
+                            Confirm Transfer →
+
+                        </button>
+
+                    </div>
+
+                </form>
+
+            </section>
+
+
+            <!-- Verification Card -->
+
+            <aside class="verification-card">
+
+                <div class="verification-icon">
+                    🔐
+                </div>
+
+                <h2>Verified Transfer</h2>
+
+                <p>
+                    TRACE-LOOP prevents direct unverified ownership
+                    changes and maintains a trusted device history.
+                </p>
+
+
+                <div class="verification-flow">
+
+                    <div class="verification-step">
+                        <span>1</span>
+                        <div>
+                            <strong>Current Owner</strong>
+                            <small>Confirms transfer</small>
+                        </div>
+                    </div>
+
+
+                    <div class="verification-connector"></div>
+
+
+                    <div class="verification-step">
+                        <span>2</span>
+                        <div>
+                            <strong>Authorized Node</strong>
+                            <small>Verifies transaction</small>
+                        </div>
+                    </div>
+
+
+                    <div class="verification-connector"></div>
+
+
+                    <div class="verification-step">
+                        <span>3</span>
+                        <div>
+                            <strong>New Owner</strong>
+                            <small>Receives device</small>
+                        </div>
+                    </div>
+
+                </div>
+
+
+                <div class="security-note">
+                    ✓ Lifecycle history remains intact
+                </div>
+
+            </aside>
+
+        </div>
+
+    </main>
+
+
+    <script src="js/script.js"></script>
+
+</body>
+</html>
