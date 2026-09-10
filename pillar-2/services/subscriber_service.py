@@ -9,7 +9,7 @@ from algosdk.abi import Method, ABIType
 
 # Wired directly to the compliant PostgreSQL database.py
 from database import SessionLocal
-from models.db import LedgerEvent, ChainStatus # Assuming LedgerEvent was defined in models
+from database import LedgerEvent, ChainStatus # Assuming LedgerEvent was defined in models
 
 INDEXER_URL = os.getenv("INDEXER_URL", "https://testnet-idx.algonode.cloud")
 INDEXER_TOKEN = os.getenv("INDEXER_TOKEN", "")
