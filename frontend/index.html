@@ -1,39 +1,59 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-    <title>TRACE-LOOP | Laptop Lifecycle Passport</title>
-
-    <link rel="stylesheet" href="css/style.css">
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TRACE-LOOP | Digital Lifecycle Passport</title>
+<link rel="stylesheet" href="css/style.css">
 </head>
-
 <body>
-
-    <!-- Navigation -->
-    <nav class="navbar">
-
-        <div class="logo">
-            <span>TRACE</span>-LOOP
-        </div>
-
-        <div class="nav-links">
-            <a href="#home">Home</a>
-            <a href="#how-it-works">How It Works</a>
-            <a href="#features">Features</a>
-        </div>
-
-        <button class="nav-button" onclick="trackDevice()">
-            Track Device
-        </button>
-
-    </nav>
-
-
-    <!-- Hero Section -->
-    <section class="hero" id="home">
-
+<nav class="navbar">
+  <a class="logo" href="index.html"><span>TRACE</span>-LOOP</a>
+  <div class="nav-links"><a class="active" href="index.html">Home</a><a href="dashboard.html">Dashboard</a><a href="register.html">Register</a><a href="track.html">Track</a><a href="transfer.html">Transfer</a><a href="recycling.html">Recycle</a></div>
+  <button class="nav-button" onclick="trackDevice()">Verify Device</button>
+</nav>
+<main>
+<section class="hero hero-v2" id="home">
+ <div class="hero-content">
+  <div class="badge">♻️ CIRCULAR ECONOMY • TRUSTED DIGITAL PASSPORT</div>
+  <h1>Make every laptop's <span>journey verifiable.</span></h1>
+  <p>TRACE-LOOP creates a digital lifecycle passport for used laptops, connecting registration, ownership, repair, reuse and responsible recycling in one auditable journey.</p>
+  <div class="hero-buttons"><button class="primary-button" onclick="registerDevice()">Create Digital Passport</button><button class="secondary-button" onclick="trackDevice()">Verify a Device →</button></div>
+  <div class="hero-trust"><span>✓ Tamper-evident events</span><span>✓ Verified ownership</span><span>✓ Responsible recycling</span></div>
+ </div>
+ <div class="passport-hero-card">
+  <div class="card-top"><span>DIGITAL PRODUCT PASSPORT</span><span class="status-dot">● LIVE DEMO</span></div>
+  <div class="passport-device"><div class="laptop-orb">💻</div><div><small>DEVICE ID</small><h3>TL000001</h3><p>Dell Inspiron 15 • Laptop</p></div></div>
+  <div class="passport-grid"><div><small>STATUS</small><strong>ACTIVE</strong></div><div><small>TRUST SCORE</small><strong>98/100</strong></div><div><small>EVENTS</small><strong>06</strong></div><div><small>OWNER</small><strong>VERIFIED</strong></div></div>
+  <div class="hash-strip"><span>LAST VERIFIED HASH</span><code id="heroHash">computing...</code></div>
+  <div class="verified">✓ Lifecycle integrity verified</div>
+ </div>
+</section>
+<section class="impact-strip"><div><strong>01</strong><span>Unique device identity</span></div><div><strong>02</strong><span>Chain-linked lifecycle events</span></div><div><strong>03</strong><span>Verified recycler endpoint</span></div><div><strong>04</strong><span>Digital recycling certificate</span></div></section>
+<section class="how-section" id="how-it-works">
+ <div class="section-title"><span>THE TRACE-LOOP PROTOCOL</span><h2>One device. <strong>One trusted history.</strong></h2><p>Every meaningful lifecycle action becomes a verifiable event instead of disappearing into disconnected records.</p></div>
+ <div class="protocol-grid">
+  <div class="protocol-card"><b>01</b><span>🪪</span><h3>Register</h3><p>Create a unique digital identity using device details and serial number.</p></div>
+  <div class="protocol-card"><b>02</b><span>🔄</span><h3>Transfer</h3><p>Record ownership changes while preserving the previous history.</p></div>
+  <div class="protocol-card"><b>03</b><span>🛠️</span><h3>Refurbish</h3><p>Keep repair and refurbishment events visible before reuse or resale.</p></div>
+  <div class="protocol-card"><b>04</b><span>🔍</span><h3>Verify</h3><p>Validate the device passport and event integrity before each handoff.</p></div>
+  <div class="protocol-card"><b>05</b><span>♻️</span><h3>Recycle</h3><p>Route the device to an authorized recycler and capture the final event.</p></div>
+  <div class="protocol-card"><b>06</b><span>📜</span><h3>Certify</h3><p>Generate a digital certificate proving lifecycle completion.</p></div>
+ </div>
+</section>
+<section class="features" id="features">
+ <div class="section-heading"><span>WHY TRACE-LOOP?</span><h2>Designed for a <strong>circular digital economy.</strong></h2></div>
+ <div class="feature-grid feature-grid-v2">
+  <div class="feature-card"><div class="feature-icon">🔐</div><h3>Chain-linked audit trail</h3><p>Each demo event is linked to the previous record through a cryptographic hash, making unexpected changes detectable.</p></div>
+  <div class="feature-card"><div class="feature-icon">🪪</div><h3>Digital Product Passport</h3><p>A single identity connects device information, ownership, lifecycle state and end-of-life evidence.</p></div>
+  <div class="feature-card"><div class="feature-icon">🛡️</div><h3>Verified handoffs</h3><p>Ownership and recycler workflows are separated into explicit verification and authorization stages.</p></div>
+  <div class="feature-card"><div class="feature-icon">🌱</div><h3>Impact intelligence</h3><p>Dashboard metrics can connect recovered devices with reuse, recycling and environmental impact indicators.</p></div>
+ </div>
+</section>
+<section class="judge-section"><div><span>IEEE FINAL ROUND DEMO</span><h2>From “tracking” to <strong>trusted circularity.</strong></h2><p>TRACE-LOOP is built to demonstrate the complete path from a used laptop entering the system to its verified end-of-life outcome.</p></div><div class="judge-points"><div>✓ Identity</div><div>✓ Ownership</div><div>✓ Auditability</div><div>✓ Recycling</div></div></section>
+</main>
+<footer><div class="logo"><span>TRACE</span>-LOOP</div><p>Blockchain-inspired lifecycle passport for used laptops</p><p class="copyright">© 2026 TRACE-LOOP • IEEE Final Round Prototype</p></footer>
+<script src="js/script.js"></script>
+</body></html>
         <div class="hero-content">
 
             <div class="badge">
