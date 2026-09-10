@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -33,8 +34,6 @@
 
     <main class="track-page">
 
-        <!-- Header -->
-
         <div class="track-header">
 
             <span>DEVICE TRACE</span>
@@ -49,7 +48,7 @@
         </div>
 
 
-        <!-- Search -->
+        <!-- SEARCH -->
 
         <section class="track-search">
 
@@ -82,9 +81,13 @@
         </section>
 
 
-        <!-- Device Result -->
+        <!-- DEVICE RESULT -->
 
-        <section class="device-result">
+        <section
+            class="device-result"
+            id="deviceResult"
+            style="display: none;"
+        >
 
             <div class="result-header">
 
@@ -92,55 +95,66 @@
 
                     <span>DEVICE PASSPORT</span>
 
-                    <h2>Dell Inspiron</h2>
+                    <h2 id="resultName">
+                        Laptop
+                    </h2>
 
                     <p>
-                        Device ID: <strong>TL000001</strong>
+                        Device ID:
+                        <strong id="resultDeviceId"></strong>
                     </p>
 
                 </div>
 
-                <div class="active-status">
-                    ● ACTIVE
+                <div
+                    class="active-status"
+                    id="resultStatus"
+                >
+                    ● REGISTERED
                 </div>
 
             </div>
 
 
-            <!-- Device Details -->
+            <!-- DEVICE DETAILS -->
 
             <div class="track-details">
 
                 <div>
                     <small>BRAND</small>
-                    <strong>Dell</strong>
+                    <strong id="resultBrand"></strong>
                 </div>
 
                 <div>
                     <small>MODEL</small>
-                    <strong>Inspiron</strong>
+                    <strong id="resultModel"></strong>
                 </div>
 
                 <div>
                     <small>DEVICE TYPE</small>
-                    <strong>Laptop</strong>
+                    <strong id="resultType"></strong>
                 </div>
 
                 <div>
                     <small>STATUS</small>
-                    <strong>REGISTERED</strong>
+                    <strong id="resultDeviceStatus"></strong>
                 </div>
 
             </div>
 
 
-            <!-- Lifecycle -->
+            <!-- RECYCLING INFORMATION -->
 
             <div class="history-heading">
 
                 <div>
-                    <span>LIFECYCLE HISTORY</span>
-                    <h2>Device Journey</h2>
+
+                    <span>RECYCLING INFORMATION</span>
+
+                    <h2>
+                        Final Lifecycle Stage
+                    </h2>
+
                 </div>
 
                 <div class="verified-badge">
@@ -150,10 +164,62 @@
             </div>
 
 
+            <div class="track-details">
+
+                <div>
+
+                    <small>RECYCLER</small>
+
+                    <strong id="resultRecycler">
+                        —
+                    </strong>
+
+                </div>
+
+                <div>
+
+                    <small>RECYCLING STATUS</small>
+
+                    <strong id="resultRecyclingStatus">
+                        —
+                    </strong>
+
+                </div>
+
+                <div>
+
+                    <small>CERTIFICATE ID</small>
+
+                    <strong id="resultCertificate">
+                        —
+                    </strong>
+
+                </div>
+
+            </div>
+
+
+            <!-- LIFECYCLE HISTORY -->
+
+            <div class="history-heading">
+
+                <div>
+
+                    <span>LIFECYCLE HISTORY</span>
+
+                    <h2>
+                        Device Journey
+                    </h2>
+
+                </div>
+
+            </div>
+
+
             <div class="history">
 
 
-                <!-- Event 1 -->
+                <!-- REGISTRATION -->
 
                 <div class="history-item">
 
@@ -165,17 +231,15 @@
 
                         <div class="history-top">
 
-                            <h3>Device Registered</h3>
-
-                            <span>
-                                02 Sep 2026
-                            </span>
+                            <h3>
+                                Device Registered
+                            </h3>
 
                         </div>
 
                         <p>
-                            Laptop identity created and added
-                            to the TRACE-LOOP system.
+                            Laptop identity was created and
+                            added to the TRACE-LOOP system.
                         </p>
 
                         <div class="event-info">
@@ -187,7 +251,7 @@
                 </div>
 
 
-                <!-- Event 2 -->
+                <!-- OWNERSHIP -->
 
                 <div class="history-item">
 
@@ -199,21 +263,19 @@
 
                         <div class="history-top">
 
-                            <h3>Ownership Transferred</h3>
-
-                            <span>
-                                15 Sep 2026
-                            </span>
+                            <h3>
+                                Ownership History
+                            </h3>
 
                         </div>
 
                         <p>
-                            Ownership transfer recorded through
-                            an authorized verification node.
+                            Ownership transfers are recorded
+                            in the TRACE-LOOP ownership history.
                         </p>
 
                         <div class="event-info">
-                            Event: TRANSFER
+                            Event: OWNERSHIP
                         </div>
 
                     </div>
@@ -221,43 +283,9 @@
                 </div>
 
 
-                <!-- Event 3 -->
+                <!-- RECYCLING -->
 
                 <div class="history-item">
-
-                    <div class="history-icon">
-                        🔧
-                    </div>
-
-                    <div class="history-content">
-
-                        <div class="history-top">
-
-                            <h3>Device Refurbished</h3>
-
-                            <span>
-                                22 Oct 2026
-                            </span>
-
-                        </div>
-
-                        <p>
-                            Device underwent repair or refurbishment
-                            before continuing its lifecycle.
-                        </p>
-
-                        <div class="event-info">
-                            Event: REFURBISHMENT
-                        </div>
-
-                    </div>
-
-                </div>
-
-
-                <!-- Event 4 -->
-
-                <div class="history-item future-event">
 
                     <div class="history-icon">
                         ♻️
@@ -267,17 +295,16 @@
 
                         <div class="history-top">
 
-                            <h3>Authorized Recycling</h3>
-
-                            <span>
-                                Pending
-                            </span>
+                            <h3>
+                                Authorized Recycling
+                            </h3>
 
                         </div>
 
                         <p>
-                            Final recycling will be recorded when
-                            the device reaches an authorized recycler.
+                            The device recycling status and
+                            certificate are recorded by the
+                            authorized recycler.
                         </p>
 
                         <div class="event-info">
@@ -298,4 +325,5 @@
     <script src="js/script.js"></script>
 
 </body>
+
 </html>

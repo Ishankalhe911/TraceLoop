@@ -1,3 +1,6 @@
+from services.ledger_service import create_ledger_entry
+from services.subscriber_service import notify_subscribers, log_event
+
 from flask import Blueprint, request
 from database import get_connection
 
@@ -120,10 +123,8 @@ def send_to_recycler(device_id):
                 "SENT"
             )
         )
-
         connection.commit()
         connection.close()
-
         return {
             "status": "success",
             "code": 200,
@@ -374,6 +375,24 @@ def complete_recycling(device_id):
         )
 
         connection.commit()
+
+        # Create ledger entry for completed recycling
+        ledger_entry = create_ledger_entry(
+            "DEVICE_RECYCLED",
+            device_id,
+            {
+                "certificate_id": certificate_id,
+                "recycler_id": data["recycler_id"]
+            }
+        )
+        subscriber_notifications = notify_subscribers(
+            "DEVICE_RECYCLED",
+            {
+                "device_id": device_id,
+                "certificate_id": certificate_id,
+                "recycler_id": data["recycler_id"]
+            }
+        )
         connection.close()
 
         return {
@@ -383,7 +402,9 @@ def complete_recycling(device_id):
                 "device_id": device_id,
                 "recycler_id": data["recycler_id"],
                 "status": "RECYCLED",
-                "certificate_id": certificate_id
+                "certificate_id": certificate_id,
+                "ledger_entry": ledger_entry,
+                "subscriber_notifications": subscriber_notifications
             },
             "error": None
         }

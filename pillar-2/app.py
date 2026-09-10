@@ -8,6 +8,8 @@ from routes.recycler_routes import recycler_bp
 from routes.recycling_routes import recycling_bp
 from routes.certificate_routes import certificate_bp
 from routes.reward_routes import reward_bp
+from routes.ledger_routes import ledger_bp
+from services.subscriber_service import subscribe, log_event
 
 # Pillar 3 routes
 from routes.device_profile_routes import device_profile_bp
@@ -15,6 +17,8 @@ from routes.manufacturer_routes import manufacturer_bp
 from routes.verification_routes import verification_bp
 
 app = Flask(__name__)
+subscribe("DEVICE_RECYCLED", log_event)
+
 CORS(app)
 app.register_blueprint(device_bp)
 app.register_blueprint(user_bp)
@@ -23,10 +27,17 @@ app.register_blueprint(recycler_bp)
 app.register_blueprint(recycling_bp)
 app.register_blueprint(certificate_bp)
 app.register_blueprint(reward_bp)
+...GitHub's version...
+=======
+...your version...
+>>>>>>> 86e8af3<<<<<<< HEAD
 # Register Pillar 3 blueprints
 app.register_blueprint(device_profile_bp)
 app.register_blueprint(manufacturer_bp)
 app.register_blueprint(verification_bp)
+=======
+app.register_blueprint(ledger_bp)
+>>>>>>> 86e8af3 (Complete Pillar 2 ledger and subscriber integration)
 
 
 # Create database tables

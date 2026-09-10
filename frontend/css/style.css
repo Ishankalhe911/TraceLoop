@@ -1648,3 +1648,50 @@ footer .copyright {
         padding: 25px;
     }
 }
+/* ================= RECYCLING PAGE ================= */
+
+.recycling-section {
+    margin-top: 25px;
+}
+
+.recycling-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 30px;
+}
+
+.recycling-actions button {
+    border: none;
+}
+
+.certificate-card {
+    margin-top: 25px;
+}
+
+.certificate-result {
+    background: #edf8f3;
+    border: 1px solid #cfe9dc;
+    border-radius: 10px;
+    padding: 20px;
+
+    color: #16835a;
+    font-size: 14px;
+    line-height: 1.8;
+}
+
+.certificate-result strong {
+    color: #10231b;
+}
+
+@media (max-width: 700px) {
+
+    .recycling-actions {
+        flex-direction: column;
+    }
+
+    .recycling-actions button {
+        width: 100%;
+    }
+
+}
