@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
-from database import get_db, User, UserRole, UserStatus, AdminAction, ActionType
+from database import get_db, User, UserRole, UserStatus, AdminAction, AdminActionType
 from auth import RequireRole, get_current_user
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -71,7 +71,7 @@ def approve_account(
 
         audit_log = AdminAction(
             admin_id=current_user.id,
-            action_type=ActionType.APPROVE,
+            action_type=AdminActionType.APPROVE,
             target_user_id=target_user.id,
             notes=payload.notes
         )
