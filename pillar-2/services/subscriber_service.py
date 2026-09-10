@@ -135,7 +135,7 @@ class SubscriberDaemon:
             exists = db.query(LedgerEvent).filter_by(tx_hash=txn["id"]).first()
             if not exists:
                 new_event = LedgerEvent(
-                    id=uuid.uuid4(),
+                    id=str(uuid.uuid4()),
                     device_id=device_id,
                     event_type=event_def["event_type"],
                     actor_type="SYSTEM", 
