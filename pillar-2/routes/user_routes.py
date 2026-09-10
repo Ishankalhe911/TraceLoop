@@ -1,17 +1,26 @@
+import random
+import logging
+from datetime import datetime
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, Field, root_validator
-from typing import Optional
-from datetime import datetime
+from pydantic import BaseModel, Field, validator
+from pydantic import root_validator
 
-# Import frozen models from the unified database.py
 from database import get_db, User, UserRole, UserStatus, DocType, DocStatus, KYCDocument
-from auth import get_current_user
+from auth import (
+    get_current_user,
+    create_otp_session,
+    verify_otp_session,
+    issue_tokens,
+    refresh_access_token
+)
 
-router = APIRouter()
+logger = logging.getLogger("TraceLoop.UserRoutes")
+router = APIRouter(prefix="/api/v1", tags=["Auth & Users"])
 
 def standard_response(data: dict = None, code: int = 200) -> dict:
-    """Mandatory API response envelope per SOP Section 4.1"""
     return {
         "status": "success",
         "code": code,
@@ -21,14 +30,13 @@ def standard_response(data: dict = None, code: int = 200) -> dict:
         "traceloop_version": "v1"
     }
 
-# --- PAYLOAD SCHEMAS ---
+# --- SCHEMAS ---
+
 class RegisterUserPayload(BaseModel):
-    phone: str = Field(..., max_length=15, description="Phone number for OTP")
+    phone: str = Field(..., max_length=15)
     name: str = Field(..., max_length=120)
     role: UserRole
-    # Strict DPDP/SOP Rule: Only accept the last 4 digits of Aadhaar[cite: 14, 15]
-    aadhaar_last4: str = Field(..., min_length=4, max_length=4) 
-    
+    aadhaar_last4: str = Field(..., min_length=4, max_length=4)
     gst_number: Optional[str] = None
     cpcb_number: Optional[str] = None
     brand_auth_code: Optional[str] = None
@@ -36,41 +44,43 @@ class RegisterUserPayload(BaseModel):
 
     @root_validator(skip_on_failure=True)
     def validate_role_requirements(cls, values):
-        """Enforces SOP Section 1.2 KYC Requirements dynamically based on role[cite: 15]."""
         role = values.get("role")
-        
         if role == UserRole.ADMIN:
             raise ValueError("Admin role cannot be self-assigned.")
-            
         if role == UserRole.RESELLER and not values.get("gst_number"):
-            raise ValueError("GST registration number is mandatory for RESELLER onboarding.")
-            
+            raise ValueError("GST number is mandatory for RESELLER.")
         if role == UserRole.RECYCLER and not values.get("cpcb_number"):
-            raise ValueError("CPCB registration number is mandatory for RECYCLER onboarding.")
-            
+            raise ValueError("CPCB number is mandatory for RECYCLER.")
         if role == UserRole.VERIFIABLE:
             if not values.get("brand_auth_code") or not values.get("service_center_id"):
-                raise ValueError("Brand authorization code and service center ID are mandatory for VERIFIABLE nodes.")
-                
+                raise ValueError("brand_auth_code and service_center_id are mandatory for VERIFIABLE.")
         return values
 
+class OTPSendPayload(BaseModel):
+    phone: str = Field(..., max_length=15)
+
 class OTPVerifyPayload(BaseModel):
-    phone: str
-    otp_code: str
+    phone: str = Field(..., max_length=15)
+    otp_code: str = Field(..., min_length=4, max_length=6)
+
+class RefreshTokenPayload(BaseModel):
+    refresh_token: str
 
 class KYCUploadPayload(BaseModel):
     doc_type: DocType
-    file_hash: str  # In a real app, this would use FastAPI UploadFile. Using hash for hackathon simplicity.
+    file_hash: str = Field(..., min_length=64, max_length=64, description="SHA-256 of the document")
 
 
 # --- ROUTES ---
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 def register_user(payload: RegisterUserPayload, db: Session = Depends(get_db)):
-    """Registers a new user off-chain and sets status to PENDING[cite: 15]."""
-    existing_user = db.query(User).filter(User.phone == payload.phone).first()
-    if existing_user:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Phone number is already registered.")
+    """
+    Step 1 of onboarding. Creates user record, status=PENDING.
+    Does NOT activate the account — OTP verification required next.
+    """
+    if db.query(User).filter(User.phone == payload.phone).first():
+        raise HTTPException(status_code=409, detail="Phone number already registered.")
 
     try:
         new_user = User(
@@ -89,112 +99,167 @@ def register_user(payload: RegisterUserPayload, db: Session = Depends(get_db)):
         db.add(new_user)
         db.commit()
         db.refresh(new_user)
-        
+
         return standard_response({
             "user_id": new_user.id,
             "role": new_user.role,
             "status": new_user.status,
-            "message": "Registration initiated. Proceed to OTP verification."
+            "message": "Registration successful. Call POST /otp/send to receive your OTP."
         }, 201)
-        
+
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Database error during registration: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Registration failed: {str(e)}")
+
+
+@router.post("/otp/send")
+def send_otp(payload: OTPSendPayload, db: Session = Depends(get_db)):
+    """
+    Step 2: Generates a 6-digit OTP and stores its HMAC in OTPSession.
+    Hackathon MVP: OTP is returned in the response (production would SMS it).
+    """
+    user = db.query(User).filter(User.phone == payload.phone).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Phone number not registered.")
+
+    if user.status in [UserStatus.SUSPENDED, UserStatus.REJECTED]:
+        raise HTTPException(status_code=403, detail=f"Account is {user.status}. Cannot send OTP.")
+
+    # Generate 6-digit OTP
+    otp = str(random.randint(100000, 999999))
+
+    # Store HMAC of OTP — never raw
+    create_otp_session(phone=payload.phone, otp=otp, db=db)
+
+    logger.info(f"OTP generated for {payload.phone}")
+
+    # Hackathon: return OTP directly. Production: send via SMS gateway (Twilio/MSG91)
+    return standard_response({
+        "message": "OTP sent successfully.",
+        "otp_preview": otp,  # REMOVE IN PRODUCTION
+        "expires_in_minutes": 10
+    })
 
 
 @router.post("/otp/verify")
 def verify_otp(payload: OTPVerifyPayload, db: Session = Depends(get_db)):
     """
-    Simulates OTP verification. Advances auto-activated roles to ACTIVE, 
-    and manual roles to KYC_IN_PROGRESS[cite: 15].
+    Step 3: Validates OTP against stored HMAC, advances account status,
+    and issues JWT access + refresh tokens.
+    This is the login endpoint — tokens are returned here.
     """
     user = db.query(User).filter(User.phone == payload.phone).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=404, detail="User not found.")
 
-    # Hackathon Mock: Assume any 4-digit OTP is valid
-    if len(payload.otp_code) != 4:
-        raise HTTPException(status_code=400, detail="Invalid OTP")
+    # Validates against OTPSession table — enforces expiry + attempt limit
+    verify_otp_session(phone=payload.phone, otp_code=payload.otp_code, db=db)
 
-    # Role-based activation rules per SOP Section 1.2[cite: 15]
-    if user.role in [UserRole.BUYER, UserRole.FIRST_BUYER, UserRole.RESELLER]:
-        user.status = UserStatus.ACTIVE
-    else:
-        # VERIFIABLE and RECYCLER require manual admin approval[cite: 15]
-        user.status = UserStatus.KYC_IN_PROGRESS 
+    # Advance status based on role (SOP Section 1.2)
+    if user.status == UserStatus.PENDING:
+        if user.role in [UserRole.BUYER, UserRole.FIRST_BUYER, UserRole.RESELLER]:
+            # These roles are auto-activated — still need KYC doc upload to fully activate
+            user.status = UserStatus.KYC_IN_PROGRESS
+        else:
+            # VERIFIABLE and RECYCLER go to KYC_IN_PROGRESS, await admin approval
+            user.status = UserStatus.KYC_IN_PROGRESS
 
     db.commit()
-    
+
+    # Issue tokens regardless of status — routes enforce ACTIVE status
+    # This allows the user to call /kyc/upload while KYC_IN_PROGRESS
+    tokens = issue_tokens(user=user, db=db)
+
     return standard_response({
         "user_id": user.id,
-        "new_status": user.status,
-        "message": "OTP verified successfully."
+        "role": user.role,
+        "status": user.status,
+        "message": "OTP verified. Proceed to KYC document upload.",
+        **tokens
     })
+
+
+@router.post("/token/refresh")
+def refresh_token(payload: RefreshTokenPayload, db: Session = Depends(get_db)):
+    """
+    Rotates the refresh token. Old token is revoked, new pair issued.
+    Call this when access token expires (after 60 minutes).
+    """
+    try:
+        tokens = refresh_access_token(refresh_token=payload.refresh_token, db=db)
+        return standard_response(tokens)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/kyc/upload")
 def upload_kyc_document(
-    payload: KYCUploadPayload, 
-    db: Session = Depends(get_db), 
+    payload: KYCUploadPayload,
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
-    Logs KYC document uploads and auto-activates specific roles.
-    Enforces SOP Section 1.2 document requirements.
+    Step 4: Upload KYC document hash.
+    FIRST_BUYER + RESELLER → auto ACTIVE after upload.
+    VERIFIABLE + RECYCLER → remain KYC_IN_PROGRESS until admin approves.
     """
-    # 1. Enforce Role-Specific Document Requirements
-    if current_user.role == UserRole.FIRST_BUYER and payload.doc_type != DocType.PURCHASE_PROOF:
+    # Role-specific doc type enforcement (SOP Section 1.2)
+    role_doc_map = {
+        UserRole.FIRST_BUYER: DocType.PURCHASE_PROOF,
+        UserRole.RESELLER: DocType.BUSINESS_PROOF,
+        UserRole.VERIFIABLE: DocType.BRAND_AUTH,
+        UserRole.RECYCLER: DocType.CPCB_CERT,
+    }
+    required_doc = role_doc_map.get(current_user.role)
+    if required_doc and payload.doc_type != required_doc:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, 
-            detail="FIRST_BUYER must upload a PURCHASE_PROOF."
-        )
-        
-    if current_user.role == UserRole.RESELLER and payload.doc_type != DocType.BUSINESS_PROOF:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, 
-            detail="RESELLER must upload a BUSINESS_PROOF."
+            status_code=400,
+            detail=f"{current_user.role.value} must upload {required_doc.value}, not {payload.doc_type.value}."
         )
 
     try:
-        # 2. Save the document
         new_doc = KYCDocument(
             user_id=current_user.id,
             doc_type=payload.doc_type,
-            file_path="s3://mock-bucket/document.pdf",
+            file_path="s3://traceloop-kyc/pending/document.pdf",
             file_hash=payload.file_hash,
-            # Hackathon MVP: Auto-accepting the document to streamline testing
-            status=DocStatus.ACCEPTED 
+            status=DocStatus.ACCEPTED  # MVP: auto-accept
         )
         db.add(new_doc)
-        
-        # 3. Advance User Status to ACTIVE for specific roles[cite: 5, 7]
+
         message = "Document uploaded successfully."
-        if current_user.role in [UserRole.FIRST_BUYER, UserRole.RESELLER]:
+
+        # Auto-activate BUYER-class roles
+        if current_user.role in [UserRole.FIRST_BUYER, UserRole.RESELLER, UserRole.BUYER]:
             current_user.status = UserStatus.ACTIVE
             message += " Account is now ACTIVE."
-        
+
+        # VERIFIABLE and RECYCLER stay KYC_IN_PROGRESS — admin_routes handles approval
+
         db.commit()
-        
+
         return standard_response({
             "doc_id": new_doc.id,
-            "new_status": current_user.status,
+            "status": current_user.status,
             "message": message
         })
-        
+
     except Exception as e:
         db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
-            detail=f"Failed to process upload: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"KYC upload failed: {str(e)}")
+
 
 @router.get("/me")
 def get_my_profile(current_user: User = Depends(get_current_user)):
-    """Fetches the currently authenticated user's profile."""
+    """Returns the authenticated user's profile."""
     return standard_response({
         "user_id": current_user.id,
         "name": current_user.name,
+        "phone": current_user.phone,
         "role": current_user.role,
         "status": current_user.status,
-        "admin_approved": current_user.admin_approved
+        "admin_approved": current_user.admin_approved,
+        "aadhaar_verified": current_user.aadhaar_verified
     })
