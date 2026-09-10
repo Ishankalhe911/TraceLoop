@@ -463,3 +463,431 @@
 </body>
 
 </html>
+
+    <!-- =========================
+         MAIN CONTENT
+    ========================== -->
+
+    <main class="register-page">
+
+        <!-- PAGE HEADER -->
+
+        <div class="register-header">
+
+            <span>TRACE-LOOP RECYCLING</span>
+
+            <h1>Complete Device Recycling</h1>
+
+            <p>
+                Verify authorized recyclers and securely move laptops
+                through the final stage of their lifecycle.
+            </p>
+
+        </div>
+
+
+        <div class="register-container">
+
+            <!-- =========================
+                 LEFT SIDE
+            ========================== -->
+
+            <div>
+
+
+                <!-- =========================
+                     01. REGISTER RECYCLER
+                ========================== -->
+
+                <section class="form-card">
+
+                    <div class="form-title">
+
+                        <div class="form-number">
+                            01
+                        </div>
+
+                        <div>
+                            <h2>Register Recycler</h2>
+
+                            <p>
+                                Add an authorized recycling partner.
+                            </p>
+                        </div>
+
+                    </div>
+
+
+                    <form id="recyclerForm">
+
+                        <div class="form-row">
+
+                            <div class="form-group">
+
+                                <label for="recyclerName">
+                                    Recycler Name
+                                </label>
+
+                                <input
+                                    type="text"
+                                    id="recyclerName"
+                                    placeholder="EcoRecycle Center"
+                                    required
+                                >
+
+                            </div>
+
+
+                            <div class="form-group">
+
+                                <label for="organization">
+                                    Organization
+                                </label>
+
+                                <input
+                                    type="text"
+                                    id="organization"
+                                    placeholder="EcoRecycle Pvt Ltd"
+                                    required
+                                >
+
+                            </div>
+
+                        </div>
+
+
+                        <div class="form-row">
+
+                            <div class="form-group">
+
+                                <label for="recyclerContact">
+                                    Contact
+                                </label>
+
+                                <input
+                                    type="text"
+                                    id="recyclerContact"
+                                    placeholder="9876543210"
+                                    required
+                                >
+
+                            </div>
+
+
+                            <div class="form-group">
+
+                                <label for="licenseNumber">
+                                    CPCB License Number
+                                </label>
+
+                                <input
+                                    type="text"
+                                    id="licenseNumber"
+                                    placeholder="CPCB-REC-001"
+                                    required
+                                >
+
+                            </div>
+
+                        </div>
+
+
+                        <div class="form-actions">
+
+                            <button
+                                type="submit"
+                                class="primary-button"
+                            >
+                                Register Recycler →
+                            </button>
+
+                        </div>
+
+                    </form>
+
+                </section>
+
+
+                <!-- =========================
+                     02. VERIFY RECYCLER
+                ========================== -->
+
+                <section class="form-card recycling-section">
+
+                    <div class="form-title">
+
+                        <div class="form-number">
+                            02
+                        </div>
+
+                        <div>
+                            <h2>Verify Recycler</h2>
+
+                            <p>
+                                Only verified recyclers can receive laptops.
+                            </p>
+                        </div>
+
+                    </div>
+
+
+                    <div class="form-group">
+
+                        <label for="verifyRecyclerId">
+                            Recycler ID
+                        </label>
+
+                        <input
+                            type="number"
+                            id="verifyRecyclerId"
+                            placeholder="Example: 3"
+                        >
+
+                        <small>
+                            Enter the Recycler ID received after registration.
+                        </small>
+
+                    </div>
+
+
+                    <div class="form-actions">
+
+                        <button
+                            type="button"
+                            class="primary-button"
+                            onclick="verifyRecycler()"
+                        >
+                            Verify Recycler ✓
+                        </button>
+
+                    </div>
+
+                </section>
+
+
+                <!-- =========================
+                     03. DEVICE RECYCLING
+                ========================== -->
+
+                <section class="form-card recycling-section">
+
+                    <div class="form-title">
+
+                        <div class="form-number">
+                            03
+                        </div>
+
+                        <div>
+                            <h2>Device Recycling</h2>
+
+                            <p>
+                                Move the laptop through the recycling lifecycle.
+                            </p>
+                        </div>
+
+                    </div>
+
+
+                    <!-- DEVICE ID -->
+
+                    <div class="form-group">
+
+                        <label for="recycleDeviceId">
+                            TRACE-LOOP Device ID
+                        </label>
+
+                        <input
+                            type="text"
+                            id="recycleDeviceId"
+                            placeholder="Example: TL000003"
+                        >
+
+                    </div>
+
+
+                    <!-- RECYCLER ID -->
+
+                    <div class="form-group">
+
+                        <label for="recycleRecyclerId">
+                            Recycler ID
+                        </label>
+
+                        <input
+                            type="number"
+                            id="recycleRecyclerId"
+                            placeholder="Example: 6"
+                        >
+
+                    </div>
+
+
+                    <!-- RECYCLING BUTTONS -->
+
+                    <div class="recycling-actions">
+
+                        <button
+                            type="button"
+                            class="primary-button"
+                            onclick="sendToRecycler()"
+                        >
+                            Send to Recycler
+                        </button>
+
+
+                        <button
+                            type="button"
+                            class="secondary-button"
+                            onclick="receiveByRecycler()"
+                        >
+                            Receive Laptop
+                        </button>
+
+
+                        <button
+                            type="button"
+                            class="primary-button"
+                            onclick="completeRecycling()"
+                        >
+                            Complete Recycling ✓
+                        </button>
+
+                    </div>
+
+                </section>
+
+
+                <!-- =========================
+                     CERTIFICATE
+                ========================== -->
+
+                <section
+                    class="form-card certificate-card"
+                    id="certificateCard"
+                    style="display: none;"
+                >
+
+                    <div class="form-title">
+
+                        <div class="form-number">
+                            ✓
+                        </div>
+
+                        <div>
+
+                            <h2>
+                                Recycling Completed
+                            </h2>
+
+                            <p>
+                                The laptop lifecycle has been completed.
+                            </p>
+
+                        </div>
+
+                    </div>
+
+
+                    <div
+                        class="certificate-result"
+                        id="certificateResult"
+                    ></div>
+
+                </section>
+
+            </div>
+
+
+            <!-- =========================
+                 RIGHT SIDE
+            ========================== -->
+
+            <aside class="info-card">
+
+                <div class="info-icon">
+                    ♻️
+                </div>
+
+
+                <h2>
+                    Trusted Recycling
+                </h2>
+
+
+                <p>
+                    TRACE-LOOP ensures that laptops reach verified
+                    recycling partners and maintains a transparent
+                    lifecycle record.
+                </p>
+
+
+                <div class="passport-example">
+
+                    <small>
+                        DEVICE EXAMPLE
+                    </small>
+
+                    <strong>
+                        TL000003
+                    </strong>
+
+                </div>
+
+
+                <div class="info-list">
+
+                    <div>
+                        <span>✓</span>
+                        Recycler verification required
+                    </div>
+
+                    <div>
+                        <span>✓</span>
+                        Device status is tracked
+                    </div>
+
+                    <div>
+                        <span>✓</span>
+                        Recycling record maintained
+                    </div>
+
+                    <div>
+                        <span>✓</span>
+                        Certificate generated
+                    </div>
+
+                </div>
+
+            </aside>
+
+        </div>
+
+    </main>
+
+
+    <!-- =========================
+         FOOTER
+    ========================== -->
+
+    <footer>
+
+        <p>
+            🔐 TRACE-LOOP maintains a trusted and verifiable laptop lifecycle.
+        </p>
+
+        <div class="copyright">
+            TRACE-LOOP | Pillar 2
+        </div>
+
+    </footer>
+
+
+    <!-- =========================
+         JAVASCRIPT
+    ========================== -->
+
+    <script src="js/script.js"></script>
+
+</body>
+
+</html>
