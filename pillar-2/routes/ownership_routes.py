@@ -135,6 +135,13 @@ def complete_transfer(
         
     device = db.query(Device).filter(Device.id == transfer.device_id).first()
     
+    # Pre-flight: verify stamp_valid=True and state=VERIFIED on-chain (free simulate)
+    if not ledger_service.can_transfer(device.id):
+        raise HTTPException(
+            status_code=409,
+            detail="Chain pre-check failed: device is not transferable. Stamp may be invalid or state is wrong."
+        )
+
     # Hash the new owner's ID for the blockchain to protect PII[cite: 15]
     new_owner_hash = generate_sha256(transfer.to_user_id)
 
