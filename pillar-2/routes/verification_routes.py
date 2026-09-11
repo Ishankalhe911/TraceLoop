@@ -80,7 +80,14 @@ def issue_verification_stamp(
     confirmed_config_hash = generate_sha256(config_str)
 
     try:
-        # 3. Synchronous Blockchain Mutation (Pillar 1)
+        # 3. Pre-flight: ask chain if verification is allowed (free simulate)
+        if not ledger_service.can_verify(device.id):
+            raise HTTPException(
+                status_code=409,
+                detail="Chain pre-check failed: device cannot be verified in its current on-chain state."
+            )
+
+        # 4. Synchronous Blockchain Mutation (Pillar 1)
         # Executes ARC-4 App call to PuyaPy contract[cite: 4, 6]
         chain_result = ledger_service.verify_device(
             device_id=device.id,
