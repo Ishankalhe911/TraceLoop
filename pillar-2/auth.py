@@ -208,3 +208,28 @@ def refresh_access_token(refresh_token: str, db: Session) -> dict:
     db.commit()
 
     return issue_tokens(user, db)
+
+def get_current_user_any_status(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    db: Session = Depends(get_db)
+) -> User:
+    """
+    Same as get_current_user but allows KYC_IN_PROGRESS.
+    Only used for /kyc/upload so users can submit docs before being ACTIVE.
+    """
+    token = credentials.credentials
+    payload = decode_token(token)
+
+    if payload.get("type") != "access":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token type.")
+
+    user_id = payload.get("sub")
+    user = db.query(User).filter(User.id == user_id).first()
+
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found.")
+
+    if user.status in [UserStatus.SUSPENDED, UserStatus.REJECTED]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Account is {user.status}.")
+
+    return user
