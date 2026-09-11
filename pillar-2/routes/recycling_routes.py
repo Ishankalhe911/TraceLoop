@@ -122,7 +122,14 @@ def complete_recycling(
         cert_count = db.query(RecyclingRecord).filter(RecyclingRecord.certificate_id.isnot(None)).count()
         certificate_id = f"TRC-CERT-{cert_count + 1:05d}"
 
-        # 2. Synchronous Blockchain Mutation (Pillar 1)
+        # 1.5. Pre-flight: confirm TRANSFERRED state on-chain (free simulate)
+        if not ledger_service.can_recycle(device.id):
+            raise HTTPException(
+                status_code=409,
+                detail="Chain pre-check failed: device must be in TRANSFERRED state on-chain to be recycled."
+            )
+
+        # 3. Synchronous Blockchain Mutation (Pillar 1)
         # Executes ARC-4 App call to officially terminate the device lifecycle
         chain_result = ledger_service.mark_recycled(device_id=device.id)
 
