@@ -11,6 +11,7 @@ from pydantic import root_validator
 from database import get_db, User, UserRole, UserStatus, DocType, DocStatus, KYCDocument
 from auth import (
     get_current_user,
+    get_current_user_any_status,  
     create_otp_session,
     verify_otp_session,
     issue_tokens,
@@ -163,7 +164,7 @@ def refresh_token(payload: RefreshTokenPayload, db: Session = Depends(get_db)):
 def upload_kyc_document(
     payload: KYCUploadPayload,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user_any_status) 
 ):
     """
     Uploads KYC document hash. Document is set to PENDING — 
