@@ -1,5 +1,5 @@
 
-const API_BASE = localStorage.getItem('traceloop_api_base') || 'http://127.0.0.1:8000';
+const API_BASE = localStorage.getItem('traceloop_api_base') || 'https://trace-loop.onrender.com';
 const TOKEN_KEY   = 'traceloop_access_token';
 const REFRESH_KEY = 'traceloop_refresh_token';
 const USER_KEY    = 'traceloop_user';

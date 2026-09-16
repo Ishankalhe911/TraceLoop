@@ -86,7 +86,7 @@ app = FastAPI(
 )
 
 # --- CORS ---
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000","https://traceloop-beta.vercel.app").split(",")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -114,6 +114,7 @@ app.include_router(manufacturer_router)
 
 # --- HEALTH CHECK ---
 @app.get("/", tags=["Health"])
+@app.head("/health")
 def root():
     return {
         "status": "success",
