@@ -1,12 +1,11 @@
 import random
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, Field
-from pydantic import root_validator
+from pydantic import BaseModel, Field, root_validator
 
 from database import get_db, User, UserRole, UserStatus, DocType, DocStatus, KYCDocument
 from auth import (
@@ -27,7 +26,7 @@ def standard_response(data: dict = None, code: int = 200) -> dict:
         "code": code,
         "data": data or {},
         "error": None,
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "traceloop_version": "v1"
     }
 
@@ -142,22 +141,22 @@ def verify_otp(payload: OTPVerifyPayload, db: Session = Depends(get_db)):
     db.commit()
 
     tokens = issue_tokens(
-    user=user,
-    db=db
+        user=user,
+        db=db
     )
 
     message = (
-     "OTP verified. Signed in successfully."
-     if user.status == UserStatus.ACTIVE
-     else "OTP verified. Upload the required KYC document and wait for admin activation."
+        "OTP verified. Signed in successfully."
+        if user.status == UserStatus.ACTIVE
+        else "OTP verified. Upload the required KYC document and wait for admin activation."
     )
 
     return standard_response({
-     "user_id": user.id,
-     "role": user.role,
-     "status": user.status,
-     "message": message,
-     **tokens
+        "user_id": user.id,
+        "role": user.role,
+        "status": user.status,
+        "message": message,
+        **tokens
     })
 
 
@@ -196,10 +195,13 @@ def upload_kyc_document(
             detail=f"{current_user.role.value} must upload {required_doc.value}, not {payload.doc_type.value}."
         )
 
+    # FIX: Sanitize and validate serial number so whitespace is caught
+    clean_serial = payload.serial_for_device.strip().upper() if payload.serial_for_device and payload.serial_for_device.strip() else None
+
     # Serial required for device-owning roles — admin verifies person + device together
     if current_user.role in [UserRole.FIRST_BUYER, UserRole.RESELLER]:
         if payload.doc_type in [DocType.PURCHASE_PROOF, DocType.BUSINESS_PROOF]:
-            if not payload.serial_for_device:
+            if not clean_serial:
                 raise HTTPException(
                     status_code=400,
                     detail="serial_for_device is required. Include the serial number of the device "
@@ -212,11 +214,12 @@ def upload_kyc_document(
             doc_type=payload.doc_type,
             file_path="s3://traceloop-kyc/pending/document.pdf",
             file_hash=payload.file_hash,
-            serial_for_device=payload.serial_for_device.upper() if payload.serial_for_device else None,
+            serial_for_device=clean_serial,
             status=DocStatus.PENDING
         )
         db.add(new_doc)
         db.commit()
+        db.refresh(new_doc) # FIX: Ensure we have the ID from Postgres
 
         return standard_response({
             "doc_id": new_doc.id,
@@ -232,7 +235,8 @@ def upload_kyc_document(
 
 
 @router.get("/me")
-def get_my_profile(current_user: User = Depends(get_current_user)):
+def get_my_profile(current_user: User = Depends(get_current_user_any_status)): # FIX: Unblocks dashboard for unverified users
+    """Allows authenticated users in any status (PENDING, KYC_IN_PROGRESS, ACTIVE) to view profile."""
     return standard_response({
         "user_id": current_user.id,
         "name": current_user.name,
@@ -242,10 +246,11 @@ def get_my_profile(current_user: User = Depends(get_current_user)):
         "admin_approved": current_user.admin_approved,
         "aadhaar_verified": current_user.aadhaar_verified
     })
+
+
 @router.get("/kyc/my-documents")
 def get_my_kyc_documents(
     db: Session = Depends(get_db),
-    # CRITICAL: We use 'any_status' so users who are PENDING can still fetch their notifications!
     current_user: User = Depends(get_current_user_any_status) 
 ):
     """Allows a user to see the status of their own KYC uploads for dashboard notifications."""
