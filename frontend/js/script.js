@@ -1434,6 +1434,14 @@ async function initRegisterDevice() {
     statusEl.textContent = 'Could not verify account status. Are you signed in?';
   }
 
+  // ── PREVIEW & SMART AUTO-FILL ──
+  function updatePreview() {
+    const code   = ($('#brand_code')?.value || '??').toUpperCase();
+    const serial = ($('#serial_raw')?.value || 'SERIAL').toUpperCase();
+    const el = $('#device-id-preview');
+    if (el) el.textContent = `TL-${code}-${serial}`;
+  }
+
   // Brand code → auto-fill brand name & Preview
   const brandNames = { DL:'Dell', HP:'HP', LN:'Lenovo', AS:'Asus', AC:'Acer', AP:'Apple', MS:'MSI', SG:'Samsung' };
   $('#brand_code')?.addEventListener('change', e => {
@@ -1441,13 +1449,17 @@ async function initRegisterDevice() {
     updatePreview();
   });
 
-  function updatePreview() {
-    const code   = ($('#brand_code')?.value || '??').toUpperCase();
-    const serial = ($('#serial_raw')?.value || 'SERIAL').toUpperCase();
-    const el = $('#device-id-preview');
-    if (el) el.textContent = `TL-${code}-${serial}`;
-  }
   $('#serial_raw')?.addEventListener('input', updatePreview);
+
+  // Smart auto-fill from notifications
+  const urlParams = new URLSearchParams(window.location.search);
+  const prefillSerial = urlParams.get('serial');
+  if (prefillSerial && $('#serial_raw')) {
+    $('#serial_raw').value = prefillSerial;
+    updatePreview(); 
+    $('#serial_raw').style.boxShadow = "0 0 0 2px var(--green)";
+    setTimeout(() => { $('#serial_raw').style.boxShadow = "none"; }, 1500);
+  }
 
   // ── Form submit & Validation handler ──────────────────────────
   mainForm?.addEventListener('submit', async e => {
@@ -1587,25 +1599,8 @@ async function initRegisterDevice() {
       toast(x.message, 'error');
     } finally { setBusy(e.submitter, false); }
   });
-}
-function updatePreview() {
-    const code   = ($('#brand_code')?.value || '??').toUpperCase();
-    const serial = ($('#serial_raw')?.value || 'SERIAL').toUpperCase();
-    const el = $('#device-id-preview');
-    if (el) el.textContent = `TL-${code}-${serial}`;
-  }
-  $('#serial_raw')?.addEventListener('input', updatePreview);
 
-  // ---> ADD THIS NEW BLOCK RIGHT HERE <---
-  // ── SMART AUTO-FILL FROM NOTIFICATIONS ──
-  const urlParams = new URLSearchParams(window.location.search);
-  const prefillSerial = urlParams.get('serial');
-  if (prefillSerial && $('#serial_raw')) {
-    $('#serial_raw').value = prefillSerial;
-    updatePreview(); 
-    $('#serial_raw').style.boxShadow = "0 0 0 2px var(--green)";
-    setTimeout(() => { $('#serial_raw').style.boxShadow = "none"; }, 1500);
-  }
+} // <--- Notice how this ONE bracket now cleanly encloses the entire function.
   // ----------------------------------------
 /* ═══════════════════════════════════════════════════════════════
    RECYCLING
