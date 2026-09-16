@@ -2,6 +2,7 @@ import os
 from typing import Dict, Any, List
 from algosdk.v2client import algod
 from algosdk import mnemonic, account
+from algosdk.encoding import decode_address
 from algosdk.abi import Contract
 from algosdk.atomic_transaction_composer import (
     AtomicTransactionComposer,
@@ -51,10 +52,12 @@ class LedgerService:
         return [self.app_id, b"operator"]
 
     def get_verifier_box(self, addr: str) -> List[Any]:
-        return [self.app_id, b"verifier_" + account.decode_address(addr)]
+        # Change account.decode_address to decode_address
+        return [self.app_id, b"verifier_" + decode_address(addr)]
 
     def get_recycler_box(self, addr: str) -> List[Any]:
-        return [self.app_id, b"recycler_" + account.decode_address(addr)]
+        # Change account.decode_address to decode_address
+        return [self.app_id, b"recycler_" + decode_address(addr)]
 
     def get_device_box(self, device_id: str) -> List[Any]:
         device_bytes = device_id.encode("utf-8")
@@ -105,16 +108,15 @@ class LedgerService:
 
     def raise_dispute(self, device_id: str, dispute_type: int, raised_by_role: str = "OPERATOR") -> Dict[str, Any]:
         _, sender_addr = self._get_signer_and_address(raised_by_role)
-        boxes = [self.get_device_box(device_id)]
-        
-        # Optimized conditional box reference
-        if raised_by_role.upper() == "OPERATOR":
-            boxes.insert(0, self.get_operator_box())
-        else:
-            boxes.insert(0, self.get_verifier_box(sender_addr))
-            
+    
+        # Contract checks BOTH operator box AND verifier box for the sender
+        # Both must be referenced — AVM needs all box references declared upfront
+        boxes = [
+        self.get_operator_box(),
+        self.get_verifier_box(sender_addr),
+        self.get_device_box(device_id)
+        ]
         return self.execute_transaction("raise_dispute", [device_id, dispute_type], boxes, raised_by_role)
-
     def resolve_dispute(self, device_id: str, resolved_state: int) -> Dict[str, Any]:
         boxes = [self.get_device_box(device_id)]
         return self.execute_transaction("resolve_dispute", [device_id, resolved_state], boxes, "ADMIN")

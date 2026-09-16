@@ -97,7 +97,7 @@ app.add_middleware(
 
 # --- REGISTER ROUTERS ---
 # Auth & Identity
-app.include_router(user_router,   prefix="/api/v1")
+app.include_router(user_router)
 
 # Core Lifecycle (Pillar 2 — chain-integrated)
 app.include_router(device_router)

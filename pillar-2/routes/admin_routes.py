@@ -102,7 +102,6 @@ def approve_account(
 
 
 # --- 2. KYC DOCUMENT REVIEW (FIRST_BUYER + RESELLER) ---
-
 @router.get("/kyc/pending")
 def get_pending_documents(
     db: Session = Depends(get_db),
@@ -120,11 +119,13 @@ def get_pending_documents(
                 "user_id": d.user_id,
                 "doc_type": d.doc_type,
                 "file_hash": d.file_hash,
-                "uploaded_at": d.uploaded_at.isoformat() + "Z"
+                # THIS FIXES THE MISSING SERIAL IN YOUR SCREENSHOT
+                "serial_for_device": getattr(d, 'serial_for_device', None), 
+                # THIS HELPS FIX THE INVALID DATE
+                "uploaded_at": d.uploaded_at.isoformat() + "Z" if getattr(d, 'uploaded_at', None) else None
             } for d in pending_docs
         ]
     })
-
 
 @router.post("/kyc/{doc_id}/review")
 def review_kyc_document(
@@ -243,3 +244,26 @@ def export_device(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+
+
+@router.get("/devices")
+def get_all_devices(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(RequireRole([UserRole.ADMIN]))
+):
+    """Admin oversight — all devices across all states."""
+    devices = db.query(Device).order_by(Device.registered_at.desc()).all()
+    return standard_response({
+        "total": len(devices),
+        "devices": [
+            {
+                "device_id": d.id,
+                "brand": d.brand_name,
+                "status": d.status,
+                "stamp_valid": d.stamp_valid,
+                "current_owner_id": d.current_owner_id,
+                "is_for_sale": d.is_for_sale,
+                "registered_at": d.registered_at.isoformat() + "Z" if d.registered_at else None
+            } for d in devices
+        ]
+    })

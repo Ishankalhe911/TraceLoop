@@ -1,6 +1,6 @@
 import hashlib
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
@@ -18,12 +18,20 @@ def standard_response(data: dict = None, code: int = 200) -> dict:
         "code": code,
         "data": data or {},
         "error": None,
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "traceloop_version": "v1"
     }
 
 def generate_sha256(data: str) -> str:
     return hashlib.sha256(data.encode('utf-8')).hexdigest()
+
+def make_aware(dt: datetime) -> datetime:
+    """Ensures a datetime is timezone-aware (UTC). Handles both naive and aware."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 class RegisterDevicePayload(BaseModel):
@@ -41,52 +49,60 @@ def register_device(
 ):
     """
     Registers a new device. FIRST_BUYER only.
-    Requires admin-approved PURCHASE_PROOF before chain registration.
+    Requires admin-approved PURCHASE_PROOF tied specifically to the hardware serial number.
     """
-    # Proof of ownership: admin must have reviewed and accepted purchase proof
+    # 1. Sanitize & Normalize Inputs
+    brand_code_upper = payload.brand_code.strip().upper()
+    serial_upper = payload.serial_raw.strip().upper()
+    device_id = f"TL-{brand_code_upper}-{serial_upper}"
+
+    # 2. Hardware Uniqueness Guard: Prevent duplicate registration of the same physical serial
+    existing_device = db.query(Device).filter(
+        (Device.id == device_id) | (Device.serial_raw == serial_upper)
+    ).first()
+    if existing_device:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Device with serial '{serial_upper}' is already registered in Trace-Loop."
+        )
+
+    # 3. Cryptographic Hardware-Bound KYC Check
+    # Ensures the user cannot use an accepted invoice for Device A to register Device B
     proof = db.query(KYCDocument).filter(
         KYCDocument.user_id == current_user.id,
         KYCDocument.doc_type == DocType.PURCHASE_PROOF,
-        KYCDocument.status == DocStatus.ACCEPTED
+        KYCDocument.status == DocStatus.ACCEPTED,
+        KYCDocument.serial_for_device == serial_upper
     ).first()
 
     if not proof:
         raise HTTPException(
-            status_code=403,
-            detail="Admin-approved purchase proof required before registering a device. "
-                   "Upload via POST /api/v1/kyc/upload and await admin approval."
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Admin-approved purchase proof required for serial '{serial_upper}'. "
+                   "Please upload proof via KYC and await admin approval."
         )
 
-    # Device ID format: TL-{BRAND}-{SERIAL}
-    brand_code_upper = payload.brand_code.upper()
-    serial_upper = payload.serial_raw.upper()
-    device_id = f"TL-{brand_code_upper}-{serial_upper}"
-
-    # Idempotency check
-    if db.query(Device).filter(Device.id == device_id).first():
-        raise HTTPException(status_code=409, detail="Device already registered in Trace-Loop.")
-
-    # SHA-256 all PII before chain
+    # 4. Hash PII and hardware config before blockchain write
     serial_hash = generate_sha256(serial_upper)
     owner_hash = generate_sha256(current_user.id)
     config_str = json.dumps(payload.original_config, sort_keys=True)
     config_hash = generate_sha256(config_str)
 
     try:
-        # Chain first — Pillar 1
+        # Chain first — Pillar 1 (Algorand Ledger)
         chain_result = ledger_service.register_device(
             device_id=device_id,
             owner_hash=owner_hash,
             config_hash=config_hash
         )
 
-        # DB after confirmation — Pillar 3
+        # DB after confirmation — Pillar 3 (PostgreSQL State)
         new_device = Device(
             id=device_id,
             serial_hash=serial_hash,
             serial_raw=serial_upper,
             brand_code=brand_code_upper,
-            brand_name=payload.brand_name,
+            brand_name=payload.brand_name.strip(),
             original_config=payload.original_config,
             current_config=payload.original_config,
             current_owner_id=current_user.id,
@@ -110,6 +126,35 @@ def register_device(
         raise HTTPException(status_code=500, detail=f"Registration failed: {str(e)}")
 
 
+@router.get("/my-devices")
+def get_my_devices(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Fetches all devices currently owned by the authenticated user, including verification status."""
+    devices = db.query(Device).filter(
+        Device.current_owner_id == current_user.id
+    ).order_by(Device.updated_at.desc()).all()
+
+    results = []
+    for d in devices:
+        results.append({
+            "device_id": d.id,
+            "brand": d.brand_name,
+            "status": d.status,
+            "stamp_valid": d.stamp_valid,
+            "is_for_sale": d.is_for_sale,
+            "asking_price": float(d.asking_price) if d.asking_price else None,
+            "last_verified_at": make_aware(d.last_verified_at).isoformat() if d.last_verified_at else None,
+            "current_config": d.current_config,
+        })
+
+    return standard_response({
+        "total_owned": len(results),
+        "devices": results
+    })
+
+
 @router.get("/{device_id}")
 def get_device(
     device_id: str,
@@ -131,16 +176,19 @@ def get_device(
             "chain_status": chain_state["state_label"],
             "stamp_valid": chain_state["stamp_valid"],
             "current_config": db_device.current_config,
-            "last_verified_at": db_device.last_verified_at.isoformat() + "Z" if db_device.last_verified_at else None,
-            "registered_at": db_device.registered_at.isoformat() + "Z"
+            "last_verified_at": make_aware(db_device.last_verified_at).isoformat() if db_device.last_verified_at else None,
+            "registered_at": make_aware(db_device.registered_at).isoformat() if db_device.registered_at else None
         })
     except Exception:
-        # Graceful degradation if Algorand node unreachable
+        # Graceful degradation if Algorand node is unreachable
         return standard_response({
             "device_id": db_device.id,
             "brand": db_device.brand_name,
+            "serial_raw": db_device.serial_raw,
             "db_status": db_device.status,
             "chain_status": "UNREACHABLE",
             "current_config": db_device.current_config,
+            "last_verified_at": make_aware(db_device.last_verified_at).isoformat() if db_device.last_verified_at else None,
+            "registered_at": make_aware(db_device.registered_at).isoformat() if db_device.registered_at else None,
             "error_note": "Could not fetch real-time blockchain state."
         })

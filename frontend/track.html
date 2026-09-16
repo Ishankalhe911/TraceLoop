@@ -1,304 +1,51 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>TRACE-LOOP | Verify Passport</title><link rel="stylesheet" href="css/style.css"></head><body>
-<nav class="navbar"><a class="logo" href="index.html"><span>TRACE</span>-LOOP</a><div class="nav-links"><a href="index.html">Home</a><a href="dashboard.html">Dashboard</a><a href="register.html">Register</a><a class="active" href="track.html">Track</a><a href="transfer.html">Transfer</a><a href="recycling.html">Recycle</a></div><button class="nav-button" onclick="window.location.href='dashboard.html'">Command Center</button></nav>
-<main class="track-page track-v2"><div class="track-header"><span>DIGITAL PASSPORT VERIFICATION</span><h1>Verify a Device</h1><p>Search a TRACE-LOOP ID and inspect its identity, lifecycle state and cryptographic audit trail.</p></div>
-<section class="track-search search-v2"><label for="deviceId">TRACE-LOOP DEVICE ID</label><div class="search-box"><input type="text" id="deviceId" placeholder="e.g. TL000001" value="TL000001"><button class="primary-button" onclick="searchDevice()">Verify Passport →</button></div><div class="search-meta"><span>⌕ Try <button type="button" onclick="setDemoDevice('TL000001')">TL000001</button></span><span>● Demo verification available</span></div></section>
-<section class="device-result passport-result" id="deviceResult" style="display:block"><div class="result-header"><div><span>DIGITAL PRODUCT PASSPORT</span><h2 id="resultName">Dell Inspiron 15</h2><p>Device ID: <strong id="resultDeviceId">TL000001</strong></p></div><div class="active-status" id="resultStatus">● ACTIVE</div></div>
-<div class="passport-top-grid"><div class="passport-visual"><div class="big-device">💻</div><span>TRUST SCORE</span><strong id="trustScore">98/100</strong><small>Identity + lifecycle integrity</small></div><div class="track-details"><div><small>BRAND</small><strong id="resultBrand">Dell</strong></div><div><small>MODEL</small><strong id="resultModel">Inspiron 15</strong></div><div><small>DEVICE TYPE</small><strong id="resultType">Laptop</strong></div><div><small>STATUS</small><strong id="resultDeviceStatus">ACTIVE</strong></div><div><small>OWNER</small><strong>VERIFIED</strong></div><div><small>DATA CLASS</small><strong>DEVICE RECORD</strong></div></div></div>
-<div class="verification-banner"><div><span>🛡️ RECORD INTEGRITY</span><strong>Cryptographic chain verified</strong></div><code id="chainHash">computing...</code><button onclick="verifyIntegrity()">Verify again</button></div>
-<div class="history-heading"><div><span>LIFECYCLE LEDGER</span><h2>Complete Device Journey</h2></div><div class="verified-badge">✓ VERIFIED CHAIN</div></div>
-<div class="ledger" id="ledger"><div class="history-item"><div class="history-icon">✓</div><div class="history-content"><div class="history-top"><h3>Device Registered</h3><span>10 Jun 2026</span></div><p>Digital identity created and physical device linked to the passport.</p><div class="event-info">REGISTRATION • HASH #001</div></div></div><div class="history-item"><div class="history-icon">🔄</div><div class="history-content"><div class="history-top"><h3>Ownership Verified</h3><span>18 Jun 2026</span></div><p>Ownership event recorded without deleting the previous lifecycle history.</p><div class="event-info">TRANSFER • HASH #002</div></div></div><div class="history-item"><div class="history-icon">🛠️</div><div class="history-content"><div class="history-top"><h3>Refurbishment Check</h3><span>25 Jun 2026</span></div><p>Device condition updated for continued reuse.</p><div class="event-info">REFURBISHMENT • HASH #003</div></div></div><div class="history-item"><div class="history-icon">🔍</div><div class="history-content"><div class="history-top"><h3>Passport Verified</h3><span>Today</span></div><p>Current passport state and linked event history passed integrity verification.</p><div class="event-info">VERIFICATION • HASH #004</div></div></div></div>
-<div class="recycling-summary"><div><span>END-OF-LIFE STATUS</span><strong id="resultRecyclingStatus">Not completed</strong></div><div><span>RECYCLER</span><strong id="resultRecycler">Pending</strong></div><div><span>CERTIFICATE</span><strong id="resultCertificate">Not issued</strong></div></div>
-</section></main><script src="js/script.js"></script></body></html>
-        <div class="track-header">
-
-            <span>DEVICE TRACE</span>
-
-            <h1>Track Your Laptop</h1>
-
-            <p>
-                Enter a TRACE-LOOP Device ID to view its
-                complete lifecycle history.
-            </p>
-
-        </div>
-
-
-        <!-- SEARCH -->
-
-        <section class="track-search">
-
-            <label for="deviceId">
-                TRACE-LOOP DEVICE ID
-            </label>
-
-            <div class="search-box">
-
-                <input
-                    type="text"
-                    id="deviceId"
-                    placeholder="e.g. TL000001"
-                >
-
-                <button
-                    class="primary-button"
-                    onclick="searchDevice()">
-
-                    Track Device →
-
-                </button>
-
-            </div>
-
-            <small>
-                Try the demo Device ID: TL000001
-            </small>
-
-        </section>
-
-
-        <!-- DEVICE RESULT -->
-
-        <section
-            class="device-result"
-            id="deviceResult"
-            style="display: none;"
-        >
-
-            <div class="result-header">
-
-                <div>
-
-                    <span>DEVICE PASSPORT</span>
-
-                    <h2 id="resultName">
-                        Laptop
-                    </h2>
-
-                    <p>
-                        Device ID:
-                        <strong id="resultDeviceId"></strong>
-                    </p>
-
-                </div>
-
-                <div
-                    class="active-status"
-                    id="resultStatus"
-                >
-                    ● REGISTERED
-                </div>
-
-            </div>
-
-
-            <!-- DEVICE DETAILS -->
-
-            <div class="track-details">
-
-                <div>
-                    <small>BRAND</small>
-                    <strong id="resultBrand"></strong>
-                </div>
-
-                <div>
-                    <small>MODEL</small>
-                    <strong id="resultModel"></strong>
-                </div>
-
-                <div>
-                    <small>DEVICE TYPE</small>
-                    <strong id="resultType"></strong>
-                </div>
-
-                <div>
-                    <small>STATUS</small>
-                    <strong id="resultDeviceStatus"></strong>
-                </div>
-
-            </div>
-
-
-            <!-- RECYCLING INFORMATION -->
-
-            <div class="history-heading">
-
-                <div>
-
-                    <span>RECYCLING INFORMATION</span>
-
-                    <h2>
-                        Final Lifecycle Stage
-                    </h2>
-
-                </div>
-
-                <div class="verified-badge">
-                    ✓ Verified Record
-                </div>
-
-            </div>
-
-
-            <div class="track-details">
-
-                <div>
-
-                    <small>RECYCLER</small>
-
-                    <strong id="resultRecycler">
-                        —
-                    </strong>
-
-                </div>
-
-                <div>
-
-                    <small>RECYCLING STATUS</small>
-
-                    <strong id="resultRecyclingStatus">
-                        —
-                    </strong>
-
-                </div>
-
-                <div>
-
-                    <small>CERTIFICATE ID</small>
-
-                    <strong id="resultCertificate">
-                        —
-                    </strong>
-
-                </div>
-
-            </div>
-
-
-            <!-- LIFECYCLE HISTORY -->
-
-            <div class="history-heading">
-
-                <div>
-
-                    <span>LIFECYCLE HISTORY</span>
-
-                    <h2>
-                        Device Journey
-                    </h2>
-
-                </div>
-
-            </div>
-
-
-            <div class="history">
-
-
-                <!-- REGISTRATION -->
-
-                <div class="history-item">
-
-                    <div class="history-icon">
-                        ✓
-                    </div>
-
-                    <div class="history-content">
-
-                        <div class="history-top">
-
-                            <h3>
-                                Device Registered
-                            </h3>
-
-                        </div>
-
-                        <p>
-                            Laptop identity was created and
-                            added to the TRACE-LOOP system.
-                        </p>
-
-                        <div class="event-info">
-                            Event: REGISTRATION
-                        </div>
-
-                    </div>
-
-                </div>
-
-
-                <!-- OWNERSHIP -->
-
-                <div class="history-item">
-
-                    <div class="history-icon">
-                        🔄
-                    </div>
-
-                    <div class="history-content">
-
-                        <div class="history-top">
-
-                            <h3>
-                                Ownership History
-                            </h3>
-
-                        </div>
-
-                        <p>
-                            Ownership transfers are recorded
-                            in the TRACE-LOOP ownership history.
-                        </p>
-
-                        <div class="event-info">
-                            Event: OWNERSHIP
-                        </div>
-
-                    </div>
-
-                </div>
-
-
-                <!-- RECYCLING -->
-
-                <div class="history-item">
-
-                    <div class="history-icon">
-                        ♻️
-                    </div>
-
-                    <div class="history-content">
-
-                        <div class="history-top">
-
-                            <h3>
-                                Authorized Recycling
-                            </h3>
-
-                        </div>
-
-                        <p>
-                            The device recycling status and
-                            certificate are recorded by the
-                            authorized recycler.
-                        </p>
-
-                        <div class="event-info">
-                            Event: RECYCLING
-                        </div>
-
-                    </div>
-
-                </div>
-
-            </div>
-
-        </section>
-
-    </main>
-
-
-    <script src="js/script.js"></script>
-
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Track Device · Trace-Loop</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body data-page="track">
+
+<nav class="site-nav"></nav>
+
+<div class="track-search">
+  <div class="container">
+    <span class="eyebrow">Digital Product Passport</span>
+    <h1>Track any device</h1>
+    <p>Enter a Trace-Loop device ID to view its full blockchain lifecycle — config, ownership chain, stamp history, disputes, and ledger events.</p>
+    <form id="track-form" style="margin-top:24px">
+      <div class="search-bar">
+        <input id="device-id" placeholder="TL-DL-XYZ123456" autocomplete="off" spellcheck="false"
+          style="font-family:'Space Mono',monospace;font-size:.95rem">
+        <button class="button primary" type="submit">Search passport</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="passport-wrap">
+  <div class="container">
+    <div id="track-result">
+      <div class="empty">
+        <div class="empty-icon">⌁</div>
+        <strong>Enter a device ID above</strong>
+        <p>The full blockchain history will appear here.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<footer class="site-footer">
+  <div class="container">
+    <div class="footer-inner">
+      <span>Trace-Loop · IEEE YESIST12 2026</span>
+      <a href="index.html">Back to home</a>
+    </div>
+  </div>
+</footer>
+
+<script src="js/script.js"></script>
 </body>
-
 </html>

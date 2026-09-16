@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sign in · Trace-Loop</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+
+<body data-page="login">
+
+<nav class="site-nav"></nav>
+
+<main class="container auth-layout">
+
+  <section class="auth-intro">
+    <span class="eyebrow">RETURNING MEMBER</span>
+
+    <h1>Welcome back.</h1>
+
+    <p>
+      Sign in with the phone number linked to your Trace-Loop account.
+      No password is required.
+    </p>
+
+    <div class="notice info">
+      Development mode shows the OTP in the API response for testing.
+    </div>
+  </section>
+
+  <section class="auth-card">
+
+    <span class="eyebrow">PHONE + OTP</span>
+
+    <h2>Sign in</h2>
+
+    <form id="login-form">
+
+      <label>
+        Phone number
+
+        <input
+          id="login-phone"
+          name="phone"
+          required
+          maxlength="15"
+          inputmode="tel"
+          autocomplete="tel"
+          placeholder="+91 98765 43210"
+        >
+      </label>
+
+      <button
+        class="button primary"
+        id="login-send-otp"
+        type="submit"
+      >
+        Send OTP ↗
+      </button>
+
+    </form>
+
+    <div
+      id="login-otp-panel"
+      hidden
+      style="margin-top:28px"
+    >
+
+      <span class="eyebrow">STEP 02 · VERIFY</span>
+
+      <h3>Verify your phone</h3>
+
+      <p>
+        Enter the six-digit OTP sent to
+        <strong id="login-otp-phone"></strong>.
+      </p>
+
+      <div
+        id="login-otp-preview"
+        class="notice info"
+        style="margin-bottom:12px"
+      >
+        No OTP requested yet.
+      </div>
+
+      <label>
+        OTP
+
+        <input
+          id="login-otp-code"
+          placeholder="6-digit OTP"
+          maxlength="6"
+          inputmode="numeric"
+          autocomplete="one-time-code"
+        >
+      </label>
+
+      <button
+        class="button primary"
+        id="login-verify-otp"
+        type="button"
+        style="margin-top:12px"
+      >
+        Verify & sign in ↗
+      </button>
+
+      <p
+        id="login-status"
+        class="muted"
+        style="margin-top:14px"
+      ></p>
+
+    </div>
+
+    <p
+      class="muted"
+      style="margin-top:24px"
+    >
+      New to Trace-Loop?
+      <a href="register.html">Create an account</a>.
+    </p>
+
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="container">
+    Phone number + OTP is the only sign-in method.
+  </div>
+</footer>
+
+<script src="js/script.js?v=999"></script>
+
+</body>
+</html>

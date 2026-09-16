@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Register Device · Trace-Loop</title>
+<link rel="stylesheet" href="css/style.css">
+<style>
+  /* Custom styles for the live KYC check */
+  .check-status {
+    padding: 14px 16px;
+    border-radius: var(--radius);
+    margin-bottom: 24px;
+    font-size: 0.9rem;
+    line-height: 1.5;
+  }
+  .check-status.ok {
+    background: var(--green-bg);
+    color: var(--green-dim);
+    border-left: 4px solid var(--green);
+  }
+  .check-status.blocked {
+    background: var(--red-bg);
+    color: var(--red);
+    border-left: 4px solid var(--red);
+  }
+  .show-validation input:invalid,
+  .show-validation select:invalid {
+    border-color: var(--red) !important;
+    background-color: var(--red-bg) !important;}
+</style>
+</head>
+<body data-page="device-register">
+
+<nav class="site-nav"></nav>
+
+<div style="background:var(--forest);padding:48px 0 40px">
+  <div class="container">
+    <span class="eyebrow">First Buyer</span>
+    <h1 style="color:var(--white);margin-bottom:8px">Register a device</h1>
+    <p style="color:rgba(255,255,255,.6)">
+      Create an on-chain lifecycle passport for your laptop. Requires admin-approved purchase proof already on file.
+    </p>
+  </div>
+</div>
+
+<div style="padding:40px 0 64px">
+  <div class="container" style="max-width:720px">
+
+    <div class="card">
+      
+      <!-- 1. LIVE KYC PRE-FLIGHT CHECK BANNER -->
+      <div id="kyc-status-check" class="check-status">
+        <div style="opacity:0.7">Checking account verification status...</div>
+      </div>
+
+      <h2 style="margin-bottom:20px">Device details</h2>
+
+      <form id="device-form" class="form-grid">
+
+        <div class="form-2col">
+          <label>
+            Brand <span class="req">*</span>
+            <select name="brand_code" id="brand_code" required>
+              <option value="">Select brand</option>
+              <option value="DL">Dell</option>
+              <option value="HP">HP</option>
+              <option value="LN">Lenovo</option>
+              <option value="AS">Asus</option>
+              <option value="AC">Acer</option>
+              <option value="AP">Apple</option>
+              <option value="MS">MSI</option>
+              <option value="SG">Samsung</option>
+            </select>
+          </label>
+          <label>
+            Brand name <span class="req">*</span>
+            <input name="brand_name" id="brand_name" required maxlength="40" placeholder="e.g. Dell">
+          </label>
+        </div>
+
+        <label>
+          Serial number <span class="req">*</span>
+          <input name="serial_raw" id="serial_raw" required maxlength="80" placeholder="As printed on the laptop / invoice"
+            style="font-family:'Space Mono',monospace; text-transform: uppercase;"
+            oninput="this.value=this.value.toUpperCase()">
+          <span class="muted" style="font-size:.78rem;margin-top:4px;display:block">
+            Must match the serial on the purchase proof submitted during KYC.
+          </span>
+        </label>
+
+        <!-- 2. LIVE PASSPORT ID PREVIEW -->
+        <div style="background:var(--grey-bg); padding:16px; border-radius:var(--radius); margin:8px 0 24px; text-align:center; border: 1px dashed var(--border)">
+          <span class="eyebrow" style="color:var(--muted)">Generated Algorand Passport ID</span>
+          <div id="device-id-preview" class="mono" style="font-size:1.3rem; color:var(--forest); margin-top:4px; font-weight:bold;">TL-??-SERIAL</div>
+        </div>
+
+        <h3 style="margin-top:8px;margin-bottom:4px;font-size:1rem">Hardware configuration</h3>
+        <p class="muted" style="font-size:.85rem;margin-bottom:16px">This will be the baseline config recorded on-chain.</p>
+
+        <div class="form-2col">
+          <label>
+            Processor <span class="req">*</span>
+            <input name="processor" required placeholder="e.g. Intel Core i5-1135G7">
+          </label>
+          <label>
+            RAM <span class="req">*</span>
+            <input name="ram" required placeholder="e.g. 8GB DDR4">
+          </label>
+        </div>
+        <div class="form-2col">
+          <label>
+            Storage <span class="req">*</span>
+            <input name="storage" required placeholder="e.g. 512GB NVMe SSD">
+          </label>
+          <label>
+            Condition <span class="req">*</span>
+            <select name="condition" required>
+              <option value="">Select condition</option>
+              <option value="New">New / Sealed</option>
+              <option value="Like New">Like New</option>
+              <option value="Good">Good</option>
+              <option value="Fair">Fair</option>
+              <option value="Poor">Poor</option>
+            </select>
+          </label>
+        </div>
+
+        <label>
+          Display
+          <input name="display" placeholder="e.g. 15.6-inch FHD 1920×1080">
+        </label>
+
+        <div id="register-result"></div>
+
+        <div style="display:flex;gap:12px;margin-top:8px">
+          <!-- 3. ADDED ID TO SUBMIT BUTTON FOR JS CONTROL -->
+          <button class="button primary" type="submit" id="btn-register">Register device on-chain</button>
+          <a class="button ghost" href="dashboard.html">Cancel</a>
+        </div>
+
+      </form>
+    </div>
+
+    <!-- Info box -->
+    <div class="notice info" style="margin-top:20px">
+      <strong>What happens next?</strong><br>
+      Your device passport is created with state <strong>REGISTERED</strong> on the Algorand ledger.
+      Take the device to a brand-authorized service centre to get it stamped as <strong>VERIFIED</strong>
+      before you can transfer it.
+    </div>
+
+  </div>
+</div>
+
+<footer class="site-footer">
+  <div class="container">
+    <div class="footer-inner">
+      <span>Trace-Loop · IEEE YESIST12 2026</span>
+      <a href="dashboard.html">Back to workspace</a>
+    </div>
+  </div>
+</footer>
+
+<script src="js/script.js"></script>
+</body>
+</html><!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Register Device · Trace-Loop</title>
+<link rel="stylesheet" href="css/style.css">
+<style>
+  /* Custom styles for the live KYC check */
+  .check-status {
+    padding: 14px 16px;
+    border-radius: var(--radius);
+    margin-bottom: 24px;
+    font-size: 0.9rem;
+    line-height: 1.5;
+  }
+  .check-status.ok {
+    background: var(--green-bg);
+    color: var(--green-dim);
+    border-left: 4px solid var(--green);
+  }
+  .check-status.blocked {
+    background: var(--red-bg);
+    color: var(--red);
+    border-left: 4px solid var(--red);
+  }
+  .show-validation input:invalid,
+  .show-validation select:invalid {
+    border-color: var(--red) !important;
+    background-color: var(--red-bg) !important;
+  }
+
+  /* ── Dropzone CSS for Secondary KYC Upload ── */
+  .dropzone { 
+    border: 2px dashed var(--border); 
+    border-radius: var(--radius-lg); 
+    padding: 30px 20px; 
+    text-align: center; 
+    background: var(--off); 
+    cursor: pointer; 
+    transition: all 0.2s ease; 
+    margin-bottom: 16px; 
+  }
+  .dropzone:hover, .dropzone.dragover { 
+    border-color: var(--green); 
+    background: var(--green-bg); 
+  }
+  .dropzone.has-file { 
+    border-style: solid; 
+    border-color: var(--green); 
+    background: var(--white); 
+  }
+  .dz-icon { font-size: 2rem; margin-bottom: 8px; }
+  #hash-preview { 
+    background: var(--forest); 
+    color: var(--white); 
+    padding: 12px 16px; 
+    border-radius: var(--radius); 
+    margin-bottom: 16px; 
+    font-size: 0.85rem; 
+  }
+  #hash-value { 
+    display: block; 
+    color: var(--green); 
+    font-family: 'Space Mono', monospace; 
+    font-size: 0.75rem; 
+    word-break: break-all; 
+    margin-top: 4px; 
+  }
+</style>
+</head>
+<body data-page="device-register">
+
+<nav class="site-nav"></nav>
+
+<div style="background:var(--forest);padding:48px 0 40px">
+  <div class="container">
+    <span class="eyebrow">First Buyer</span>
+    <h1 style="color:var(--white);margin-bottom:8px">Register a device</h1>
+    <p style="color:rgba(255,255,255,.6)">
+      Create an on-chain lifecycle passport for your laptop. Requires admin-approved purchase proof already on file.
+    </p>
+  </div>
+</div>
+
+<div style="padding:40px 0 64px">
+  <div class="container" style="max-width:720px">
+
+    <div class="card">
+      
+      <!-- 1. LIVE KYC PRE-FLIGHT CHECK BANNER -->
+      <div id="kyc-status-check" class="check-status">
+        <div style="opacity:0.7">Checking account verification status...</div>
+      </div>
+
+      <h2 style="margin-bottom:20px">Device details</h2>
+
+      <!-- Added novalidate so our custom JS error handler can intercept missing fields -->
+      <form id="device-form" class="form-grid" novalidate>
+
+        <div class="form-2col">
+          <label>
+            Brand <span class="req">*</span>
+            <select name="brand_code" id="brand_code" required>
+              <option value="">Select brand</option>
+              <option value="DL">Dell</option>
+              <option value="HP">HP</option>
+              <option value="LN">Lenovo</option>
+              <option value="AS">Asus</option>
+              <option value="AC">Acer</option>
+              <option value="AP">Apple</option>
+              <option value="MS">MSI</option>
+              <option value="SG">Samsung</option>
+            </select>
+          </label>
+          <label>
+            Brand name <span class="req">*</span>
+            <input name="brand_name" id="brand_name" required maxlength="40" placeholder="e.g. Dell">
+          </label>
+        </div>
+
+        <label>
+          Serial number <span class="req">*</span>
+          <input name="serial_raw" id="serial_raw" required maxlength="80" placeholder="As printed on the laptop / invoice"
+            style="font-family:'Space Mono',monospace; text-transform: uppercase;"
+            oninput="this.value=this.value.toUpperCase()">
+          <span class="muted" style="font-size:.78rem;margin-top:4px;display:block">
+            Must match the serial on the purchase proof submitted during KYC.
+          </span>
+        </label>
+
+        <!-- 2. LIVE PASSPORT ID PREVIEW -->
+        <div style="background:var(--grey-bg); padding:16px; border-radius:var(--radius); margin:8px 0 24px; text-align:center; border: 1px dashed var(--border)">
+          <span class="eyebrow" style="color:var(--muted)">Generated Algorand Passport ID</span>
+          <div id="device-id-preview" class="mono" style="font-size:1.3rem; color:var(--forest); margin-top:4px; font-weight:bold;">TL-??-SERIAL</div>
+        </div>
+
+        <h3 style="margin-top:8px;margin-bottom:4px;font-size:1rem">Hardware configuration</h3>
+        <p class="muted" style="font-size:.85rem;margin-bottom:16px">This will be the baseline config recorded on-chain.</p>
+
+        <div class="form-2col">
+          <label>
+            Processor <span class="req">*</span>
+            <input name="processor" required placeholder="e.g. Intel Core i5-1135G7">
+          </label>
+          <label>
+            RAM <span class="req">*</span>
+            <input name="ram" required placeholder="e.g. 8GB DDR4">
+          </label>
+        </div>
+        <div class="form-2col">
+          <label>
+            Storage <span class="req">*</span>
+            <input name="storage" required placeholder="e.g. 512GB NVMe SSD">
+          </label>
+          <label>
+            Condition <span class="req">*</span>
+            <select name="condition" required>
+              <option value="">Select condition</option>
+              <option value="New">New / Sealed</option>
+              <option value="Like New">Like New</option>
+              <option value="Good">Good</option>
+              <option value="Fair">Fair</option>
+              <option value="Poor">Poor</option>
+            </select>
+          </label>
+        </div>
+
+        <label>
+          Display
+          <input name="display" placeholder="e.g. 15.6-inch FHD 1920×1080">
+        </label>
+
+        <div id="register-result"></div>
+
+        <div style="display:flex;gap:12px;margin-top:8px" id="main-actions">
+          <!-- Changed to type="button" to allow pure JS handling -->
+          <button class="button primary" type="button" id="btn-register">Register device on-chain</button>
+          <a class="button ghost" href="dashboard.html">Cancel</a>
+        </div>
+
+      </form>
+
+      <!-- ── NEW: DYNAMIC KYC UPLOAD SECTION FOR SECOND DEVICES ── -->
+      <div id="new-kyc-section" style="display:none; margin-top: 32px; border-top: 1px solid var(--border); padding-top: 24px;">
+        <h3 style="color:var(--forest)">Upload Purchase Invoice</h3>
+        <p class="muted" style="margin-bottom:16px;">
+          We didn't find an approved purchase proof for <strong id="kyc-serial-display" class="mono text-green" style="color:var(--green)"></strong>. 
+          Upload the invoice for this specific device to proceed.
+        </p>
+        
+        <form id="new-kyc-form">
+          <div class="dropzone" id="kyc-dropzone" onclick="document.getElementById('kyc-file').click()">
+            <div class="dz-icon">📄</div>
+            <strong style="display:block; font-family:'Space Grotesk',sans-serif; margin-bottom:4px">Click to upload invoice</strong>
+            <span class="muted" id="dz-filename">PDF, JPG, or PNG (max 5MB)</span>
+            <input type="file" id="kyc-file" accept=".pdf,.jpg,.jpeg,.png,.webp" style="display:none">
+          </div>
+          
+          <!-- Hash Preview -->
+          <div id="hash-preview" style="display:none">
+            <strong>🔒 Cryptographic Hash Generated</strong>
+            <span id="hash-value"></span>
+          </div>
+          
+          <button class="button secondary full" type="submit" id="btn-new-kyc" disabled>Submit Invoice for Review</button>
+        </form>
+        <div id="new-kyc-result" style="margin-top:16px"></div>
+      </div>
+
+    </div>
+
+    <!-- Info box -->
+    <div class="notice info" style="margin-top:20px">
+      <strong>What happens next?</strong><br>
+      Your device passport is created with state <strong>REGISTERED</strong> on the Algorand ledger.
+      Take the device to a brand-authorized service centre to get it stamped as <strong>VERIFIED</strong>
+      before you can transfer it.
+    </div>
+
+  </div>
+</div>
+
+<footer class="site-footer">
+  <div class="container">
+    <div class="footer-inner">
+      <span>Trace-Loop · IEEE YESIST12 2026</span>
+      <a href="dashboard.html">Back to workspace</a>
+    </div>
+  </div>
+</footer>
+
+<script src="js/script.js"></script>
+</body>
+</html>

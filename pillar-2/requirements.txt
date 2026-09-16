@@ -1,0 +1,9 @@
+fastapi==0.115.0
+uvicorn==0.30.6
+sqlalchemy==2.0.35
+psycopg2-binary==2.9.9
+PyJWT==2.9.0
+py-algorand-sdk
+pydantic==1.10.21
+python-dotenv==1.0.1
+python-multipart==0.0.12

@@ -11,6 +11,7 @@ from pydantic import root_validator
 from database import get_db, User, UserRole, UserStatus, DocType, DocStatus, KYCDocument
 from auth import (
     get_current_user,
+    get_current_user_any_status,  
     create_otp_session,
     verify_otp_session,
     issue_tokens,
@@ -69,6 +70,12 @@ class RefreshTokenPayload(BaseModel):
 class KYCUploadPayload(BaseModel):
     doc_type: DocType
     file_hash: str = Field(..., min_length=64, max_length=64, description="SHA-256 of the document")
+    serial_for_device: Optional[str] = Field(
+        None, max_length=80,
+        description="Serial number of the device this proof covers. "
+                    "Required for FIRST_BUYER (PURCHASE_PROOF) and RESELLER (BUSINESS_PROOF). "
+                    "Admin verifies both your identity AND this serial in one step."
+    )
 
 
 # --- ROUTES ---
@@ -130,21 +137,27 @@ def verify_otp(payload: OTPVerifyPayload, db: Session = Depends(get_db)):
 
     verify_otp_session(phone=payload.phone, otp_code=payload.otp_code, db=db)
 
-    # All roles move to KYC_IN_PROGRESS after OTP — activation happens via:
-    # BUYER/FIRST_BUYER/RESELLER: after admin approves their KYC doc
-    # VERIFIABLE/RECYCLER: after admin approves their account
     if user.status == UserStatus.PENDING:
         user.status = UserStatus.KYC_IN_PROGRESS
     db.commit()
 
-    # Tokens issued here so user can call /kyc/upload
-    tokens = issue_tokens(user=user, db=db)
+    tokens = issue_tokens(
+    user=user,
+    db=db
+    )
+
+    message = (
+     "OTP verified. Signed in successfully."
+     if user.status == UserStatus.ACTIVE
+     else "OTP verified. Upload the required KYC document and wait for admin activation."
+    )
+
     return standard_response({
-        "user_id": user.id,
-        "role": user.role,
-        "status": user.status,
-        "message": "OTP verified. Upload your KYC document to proceed.",
-        **tokens
+     "user_id": user.id,
+     "role": user.role,
+     "status": user.status,
+     "message": message,
+     **tokens
     })
 
 
@@ -163,12 +176,12 @@ def refresh_token(payload: RefreshTokenPayload, db: Session = Depends(get_db)):
 def upload_kyc_document(
     payload: KYCUploadPayload,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user_any_status)
 ):
     """
-    Uploads KYC document hash. Document is set to PENDING — 
-    admin must review and accept before account becomes ACTIVE.
-    No role is auto-activated here anymore.
+    Upload KYC document hash. Always PENDING — admin must review.
+    FIRST_BUYER and RESELLER must include serial_for_device.
+    Admin verifies identity + device serial in one step.
     """
     role_doc_map = {
         UserRole.FIRST_BUYER: DocType.PURCHASE_PROOF,
@@ -183,13 +196,24 @@ def upload_kyc_document(
             detail=f"{current_user.role.value} must upload {required_doc.value}, not {payload.doc_type.value}."
         )
 
+    # Serial required for device-owning roles — admin verifies person + device together
+    if current_user.role in [UserRole.FIRST_BUYER, UserRole.RESELLER]:
+        if payload.doc_type in [DocType.PURCHASE_PROOF, DocType.BUSINESS_PROOF]:
+            if not payload.serial_for_device:
+                raise HTTPException(
+                    status_code=400,
+                    detail="serial_for_device is required. Include the serial number of the device "
+                           "this proof covers. Admin will verify it belongs to you before activation."
+                )
+
     try:
         new_doc = KYCDocument(
             user_id=current_user.id,
             doc_type=payload.doc_type,
             file_path="s3://traceloop-kyc/pending/document.pdf",
             file_hash=payload.file_hash,
-            status=DocStatus.PENDING  # ← Admin must review, never auto-accepted
+            serial_for_device=payload.serial_for_device.upper() if payload.serial_for_device else None,
+            status=DocStatus.PENDING
         )
         db.add(new_doc)
         db.commit()
@@ -197,7 +221,9 @@ def upload_kyc_document(
         return standard_response({
             "doc_id": new_doc.id,
             "status": "PENDING",
-            "message": "Document submitted. Awaiting admin review. You will be activated once approved."
+            "serial_for_device": new_doc.serial_for_device,
+            "message": "Document submitted. Awaiting admin review. "
+                       "You will be activated once approved."
         })
 
     except Exception as e:
@@ -215,4 +241,26 @@ def get_my_profile(current_user: User = Depends(get_current_user)):
         "status": current_user.status,
         "admin_approved": current_user.admin_approved,
         "aadhaar_verified": current_user.aadhaar_verified
+    })
+@router.get("/kyc/my-documents")
+def get_my_kyc_documents(
+    db: Session = Depends(get_db),
+    # CRITICAL: We use 'any_status' so users who are PENDING can still fetch their notifications!
+    current_user: User = Depends(get_current_user_any_status) 
+):
+    """Allows a user to see the status of their own KYC uploads for dashboard notifications."""
+    docs = db.query(KYCDocument).filter(
+        KYCDocument.user_id == current_user.id
+    ).order_by(KYCDocument.uploaded_at.desc()).all()
+
+    return standard_response({
+        "documents": [
+            {
+                "doc_id": d.id,
+                "doc_type": d.doc_type.value if hasattr(d.doc_type, 'value') else d.doc_type,
+                "status": d.status.value if hasattr(d.status, 'value') else d.status,
+                "serial_for_device": getattr(d, 'serial_for_device', None),
+                "rejection_reason": getattr(d, 'rejection_reason', None)
+            } for d in docs
+        ]
     })

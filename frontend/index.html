@@ -1,271 +1,145 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TRACE-LOOP | Digital Lifecycle Passport</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Trace-Loop · Blockchain Lifecycle Passport for Used Laptops</title>
 <link rel="stylesheet" href="css/style.css">
 </head>
-<body>
-<nav class="navbar">
-  <a class="logo" href="index.html"><span>TRACE</span>-LOOP</a>
-  <div class="nav-links"><a class="active" href="index.html">Home</a><a href="dashboard.html">Dashboard</a><a href="register.html">Register</a><a href="track.html">Track</a><a href="transfer.html">Transfer</a><a href="recycling.html">Recycle</a></div>
-  <button class="nav-button" onclick="trackDevice()">Verify Device</button>
-</nav>
-<main>
-<section class="hero hero-v2" id="home">
- <div class="hero-content">
-  <div class="badge">♻️ CIRCULAR ECONOMY • TRUSTED DIGITAL PASSPORT</div>
-  <h1>Make every laptop's <span>journey verifiable.</span></h1>
-  <p>TRACE-LOOP creates a digital lifecycle passport for used laptops, connecting registration, ownership, repair, reuse and responsible recycling in one auditable journey.</p>
-  <div class="hero-buttons"><button class="primary-button" onclick="registerDevice()">Create Digital Passport</button><button class="secondary-button" onclick="trackDevice()">Verify a Device →</button></div>
-  <div class="hero-trust"><span>✓ Tamper-evident events</span><span>✓ Verified ownership</span><span>✓ Responsible recycling</span></div>
- </div>
- <div class="passport-hero-card">
-  <div class="card-top"><span>DIGITAL PRODUCT PASSPORT</span><span class="status-dot">● LIVE DEMO</span></div>
-  <div class="passport-device"><div class="laptop-orb">💻</div><div><small>DEVICE ID</small><h3>TL000001</h3><p>Dell Inspiron 15 • Laptop</p></div></div>
-  <div class="passport-grid"><div><small>STATUS</small><strong>ACTIVE</strong></div><div><small>TRUST SCORE</small><strong>98/100</strong></div><div><small>EVENTS</small><strong>06</strong></div><div><small>OWNER</small><strong>VERIFIED</strong></div></div>
-  <div class="hash-strip"><span>LAST VERIFIED HASH</span><code id="heroHash">computing...</code></div>
-  <div class="verified">✓ Lifecycle integrity verified</div>
- </div>
+<body data-page="landing">
+
+<nav class="site-nav"></nav>
+
+<!-- Hero -->
+<section class="hero">
+  <div class="container">
+    <div class="hero-inner">
+      <div>
+        <div class="hero-badge">
+          <span>●</span> IEEE YESIST12 2026 · Algorand TestNet
+        </div>
+        <h1>Every laptop<br>deserves an<br><em>honest history</em></h1>
+        <p class="hero-sub">
+          Trace-Loop is a blockchain lifecycle passport for used laptops —
+          tamper-evident, multi-party verified, and built on Algorand.
+        </p>
+        <div class="hero-actions">
+          <a class="button primary" href="register.html">Get started</a>
+          <a class="button ghost" href="track.html" style="color:#fff;border-color:rgba(255,255,255,.25)">Track a device</a>
+        </div>
+      </div>
+
+      <div class="hero-visual">
+        <div class="chain-step">
+          <div class="step-dot green">✓</div>
+          <div class="chain-step-text">
+            <strong>Device Registered</strong>
+            <span>TL-DL-XYZ123 · First buyer KYC verified</span>
+          </div>
+        </div>
+        <div class="chain-step">
+          <div class="step-dot blue">✓</div>
+          <div class="chain-step-text">
+            <strong>Stamp Issued</strong>
+            <span>Dell Service Centre, Pune · Config match 100%</span>
+          </div>
+        </div>
+        <div class="chain-step">
+          <div class="step-dot amber">↗</div>
+          <div class="chain-step-text">
+            <strong>Transfer Initiated</strong>
+            <span>Owner → Verifiable node → New buyer</span>
+          </div>
+        </div>
+        <div class="chain-step">
+          <div class="step-dot grey">♻</div>
+          <div class="chain-step-text">
+            <strong>End of Life</strong>
+            <span>CPCB recycler · Certificate issued on-chain</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 </section>
-<section class="impact-strip"><div><strong>01</strong><span>Unique device identity</span></div><div><strong>02</strong><span>Chain-linked lifecycle events</span></div><div><strong>03</strong><span>Verified recycler endpoint</span></div><div><strong>04</strong><span>Digital recycling certificate</span></div></section>
-<section class="how-section" id="how-it-works">
- <div class="section-title"><span>THE TRACE-LOOP PROTOCOL</span><h2>One device. <strong>One trusted history.</strong></h2><p>Every meaningful lifecycle action becomes a verifiable event instead of disappearing into disconnected records.</p></div>
- <div class="protocol-grid">
-  <div class="protocol-card"><b>01</b><span>🪪</span><h3>Register</h3><p>Create a unique digital identity using device details and serial number.</p></div>
-  <div class="protocol-card"><b>02</b><span>🔄</span><h3>Transfer</h3><p>Record ownership changes while preserving the previous history.</p></div>
-  <div class="protocol-card"><b>03</b><span>🛠️</span><h3>Refurbish</h3><p>Keep repair and refurbishment events visible before reuse or resale.</p></div>
-  <div class="protocol-card"><b>04</b><span>🔍</span><h3>Verify</h3><p>Validate the device passport and event integrity before each handoff.</p></div>
-  <div class="protocol-card"><b>05</b><span>♻️</span><h3>Recycle</h3><p>Route the device to an authorized recycler and capture the final event.</p></div>
-  <div class="protocol-card"><b>06</b><span>📜</span><h3>Certify</h3><p>Generate a digital certificate proving lifecycle completion.</p></div>
- </div>
+
+<!-- Trust bar -->
+<div class="trust-bar">
+  <div class="container">
+    <div class="trust-items">
+      <div class="trust-item"><span class="trust-icon">⚡</span> Algorand blockchain — sub-second finality</div>
+      <div class="trust-item"><span class="trust-icon">🔒</span> PII off-chain · SHA-256 hashes on-chain</div>
+      <div class="trust-item"><span class="trust-icon">🇮🇳</span> E-Waste Rules 2022 · DPDP Act 2023 compliant</div>
+      <div class="trust-item"><span class="trust-icon">✓</span> Buyer-to-buyer transfer blocked at protocol level</div>
+    </div>
+  </div>
+</div>
+
+<!-- How it works -->
+<section class="how-section">
+  <div class="container">
+    <h2>How the chain works</h2>
+    <p>Every device moves through a strict state machine enforced by a smart contract. No step can be skipped.</p>
+
+    <div class="how-grid">
+      <div class="how-card">
+        <div class="how-num">1</div>
+        <h3>Register with proof</h3>
+        <p>The first buyer registers the device with a GST invoice or warranty receipt. KYC-verified identity anchors the chain.</p>
+      </div>
+      <div class="how-card">
+        <div class="how-num">2</div>
+        <h3>Brand-authorized stamp</h3>
+        <p>A Dell, HP, or Lenovo service centre physically inspects the device and issues a tamper-evident on-chain stamp.</p>
+      </div>
+      <div class="how-card">
+        <div class="how-num">3</div>
+        <h3>Verified transfer</h3>
+        <p>Every resale passes through the same verifiable node. Buyer-to-buyer transfers are blocked at the smart contract level.</p>
+      </div>
+      <div class="how-card">
+        <div class="how-num">4</div>
+        <h3>Declared hardware changes</h3>
+        <p>RAM swapped? SSD upgraded? Declare it. Any change invalidates the prior stamp — re-verification required before sale.</p>
+      </div>
+      <div class="how-card">
+        <div class="how-num">5</div>
+        <h3>Dispute resolution</h3>
+        <p>Any party can raise a dispute. Disputes permanently attach to the device's history — they can't be removed or overwritten.</p>
+      </div>
+      <div class="how-card">
+        <div class="how-num">6</div>
+        <h3>CPCB-registered recycling</h3>
+        <p>The lifecycle ends at a CPCB-registered facility. The terminal state is written to the Algorand ledger. Permanent. Irreversible.</p>
+      </div>
+    </div>
+  </div>
 </section>
-<section class="features" id="features">
- <div class="section-heading"><span>WHY TRACE-LOOP?</span><h2>Designed for a <strong>circular digital economy.</strong></h2></div>
- <div class="feature-grid feature-grid-v2">
-  <div class="feature-card"><div class="feature-icon">🔐</div><h3>Chain-linked audit trail</h3><p>Each demo event is linked to the previous record through a cryptographic hash, making unexpected changes detectable.</p></div>
-  <div class="feature-card"><div class="feature-icon">🪪</div><h3>Digital Product Passport</h3><p>A single identity connects device information, ownership, lifecycle state and end-of-life evidence.</p></div>
-  <div class="feature-card"><div class="feature-icon">🛡️</div><h3>Verified handoffs</h3><p>Ownership and recycler workflows are separated into explicit verification and authorization stages.</p></div>
-  <div class="feature-card"><div class="feature-icon">🌱</div><h3>Impact intelligence</h3><p>Dashboard metrics can connect recovered devices with reuse, recycling and environmental impact indicators.</p></div>
- </div>
+
+<!-- CTA -->
+<section style="background:var(--forest);padding:64px 0;">
+  <div class="container" style="text-align:center">
+    <h2 style="color:var(--white);margin-bottom:12px">Ready to verify a device?</h2>
+    <p style="color:rgba(255,255,255,.6);margin:0 auto 28px">
+      Register your laptop, track any device, or browse verified listings.
+    </p>
+    <div style="display:flex;gap:14px;justify-content:center;flex-wrap:wrap">
+      <a class="button primary" href="register.html">Create account</a>
+      <a class="button ghost" href="track.html" style="color:#fff;border-color:rgba(255,255,255,.25)">Track a device</a>
+      <button class="button ghost" id="health-check" style="color:#fff;border-color:rgba(255,255,255,.25)">Check API health</button>
+    </div>
+  </div>
 </section>
-<section class="judge-section"><div><span>IEEE FINAL ROUND DEMO</span><h2>From “tracking” to <strong>trusted circularity.</strong></h2><p>TRACE-LOOP is built to demonstrate the complete path from a used laptop entering the system to its verified end-of-life outcome.</p></div><div class="judge-points"><div>✓ Identity</div><div>✓ Ownership</div><div>✓ Auditability</div><div>✓ Recycling</div></div></section>
-</main>
-<footer><div class="logo"><span>TRACE</span>-LOOP</div><p>Blockchain-inspired lifecycle passport for used laptops</p><p class="copyright">© 2026 TRACE-LOOP • IEEE Final Round Prototype</p></footer>
+
+<footer class="site-footer">
+  <div class="container">
+    <div class="footer-inner">
+      <span>Trace-Loop · IEEE YESIST12 2026 · Blockchain lifecycle passport for used laptops</span>
+      <span>Algorand TestNet · App ID 770956001</span>
+    </div>
+  </div>
+</footer>
+
 <script src="js/script.js"></script>
-</body></html>
-        <div class="hero-content">
-
-            <div class="badge">
-                ♻️ Sustainable • Secure • Traceable
-            </div>
-
-            <h1>
-                Every Laptop Has a
-                <span>Lifecycle.</span>
-            </h1>
-
-            <p>
-                TRACE-LOOP creates a digital lifecycle passport for used
-                laptops, making every ownership transfer, repair and
-                recycling step transparent and verifiable.
-            </p>
-
-            <div class="hero-buttons">
-
-                <button class="primary-button" onclick="registerDevice()">
-                    Register Laptop
-                </button>
-
-                <button class="secondary-button" onclick="trackDevice()">
-                    Track Device →
-                </button>
-
-            </div>
-
-        </div>
-
-
-        <!-- Laptop Card -->
-        <div class="device-card">
-
-            <div class="card-top">
-                <span>DEVICE PASSPORT</span>
-                <span class="status">● ACTIVE</span>
-            </div>
-
-            <div class="laptop-icon">
-                💻
-            </div>
-
-            <h3>Dell Inspiron</h3>
-
-            <p class="device-id">
-                Device ID: TL000001
-            </p>
-
-            <div class="device-info">
-
-                <div>
-                    <small>STATUS</small>
-                    <strong>REGISTERED</strong>
-                </div>
-
-                <div>
-                    <small>LIFECYCLE</small>
-                    <strong>ACTIVE</strong>
-                </div>
-
-            </div>
-
-            <div class="verified">
-                ✓ Verified Lifecycle Record
-            </div>
-
-        </div>
-
-    </section>
-
-
-    <!-- How It Works -->
-    <section class="how-section" id="how-it-works">
-
-        <div class="section-title">
-
-            <span>HOW IT WORKS</span>
-
-            <h2>
-                One Laptop.
-                <br>
-                <strong>Complete Lifecycle.</strong>
-            </h2>
-
-        </div>
-
-
-        <div class="timeline">
-
-            <div class="timeline-item">
-                <div class="circle">01</div>
-                <h3>Register</h3>
-                <p>
-                    Create a digital identity for the laptop.
-                </p>
-            </div>
-
-            <div class="timeline-line"></div>
-
-            <div class="timeline-item">
-                <div class="circle">02</div>
-                <h3>Transfer</h3>
-                <p>
-                    Record verified ownership transfers.
-                </p>
-            </div>
-
-            <div class="timeline-line"></div>
-
-            <div class="timeline-item">
-                <div class="circle">03</div>
-                <h3>Track</h3>
-                <p>
-                    Follow the complete device lifecycle.
-                </p>
-            </div>
-
-            <div class="timeline-line"></div>
-
-            <div class="timeline-item">
-                <div class="circle">04</div>
-                <h3>Recycle</h3>
-                <p>
-                    End the lifecycle through an authorized recycler.
-                </p>
-            </div>
-
-        </div>
-
-    </section>
-
-
-    <!-- Features -->
-    <section class="features" id="features">
-
-        <div class="section-heading">
-            <span>WHY TRACE-LOOP?</span>
-
-            <h2>
-                Built for a
-                <strong>circular economy.</strong>
-            </h2>
-        </div>
-
-
-        <div class="feature-grid">
-
-            <div class="feature-card">
-                <div class="feature-icon">🔐</div>
-                <h3>Secure Records</h3>
-                <p>
-                    Tamper-evident lifecycle records protect the
-                    integrity of every device history.
-                </p>
-            </div>
-
-
-            <div class="feature-card">
-                <div class="feature-icon">🔄</div>
-                <h3>Verified Transfers</h3>
-                <p>
-                    Device ownership changes are recorded through
-                    authorized nodes.
-                </p>
-            </div>
-
-
-            <div class="feature-card">
-                <div class="feature-icon">♻️</div>
-                <h3>Responsible Recycling</h3>
-                <p>
-                    Track the laptop until it reaches an authorized
-                    recycling endpoint.
-                </p>
-            </div>
-
-
-            <div class="feature-card">
-                <div class="feature-icon">📋</div>
-                <h3>Digital Passport</h3>
-                <p>
-                    Every laptop gets a unique identity and
-                    traceable lifecycle.
-                </p>
-            </div>
-
-        </div>
-
-    </section>
-
-
-    <!-- Footer -->
-    <footer>
-
-        <div class="logo">
-            <span>TRACE</span>-LOOP
-        </div>
-
-        <p>
-            Blockchain Lifecycle Passport for Used Laptops
-        </p>
-
-        <p class="copyright">
-            © 2026 TRACE-LOOP
-        </p>
-
-    </footer>
-
-
-    <script src="js/script.js"></script>
-
 </body>
 </html>

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -20,7 +20,8 @@ def standard_response(data: dict = None, code: int = 200) -> dict:
         "code": code,
         "data": data or {},
         "error": None,
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        # FIX: Timezone-aware timestamp
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "traceloop_version": "v1"
     }
 
@@ -42,13 +43,13 @@ def receive_device(
 ):
     """
     Step 1: Recycler acknowledges physical receipt of the device.
-    Purely off-chain logistical tracking. Does NOT mutate the blockchain[cite: 7].
+    Purely off-chain logistical tracking. Does NOT mutate the blockchain.
     """
     device = db.query(Device).filter(Device.id == payload.device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found.")
 
-    # Security Check: The device must have been legally transferred to this specific recycler
+    # Security Check: Device must have been legally transferred to this specific recycler
     if device.current_owner_id != current_user.id or device.status != DeviceStatus.TRANSFERRED:
         raise HTTPException(
             status_code=403, 
@@ -56,23 +57,24 @@ def receive_device(
         )
 
     try:
-        # Check if record exists, otherwise create it
         record = db.query(RecyclingRecord).filter(
             RecyclingRecord.device_id == device.id,
             RecyclingRecord.recycler_id == current_user.id
         ).first()
+
+        now_utc = datetime.now(timezone.utc)
 
         if not record:
             record = RecyclingRecord(
                 device_id=device.id,
                 recycler_id=current_user.id,
                 recycling_status=RecyclingStatus.RECEIVED,
-                received_date=datetime.utcnow()
+                received_date=now_utc  # FIX: Timezone aware
             )
             db.add(record)
         else:
             record.recycling_status = RecyclingStatus.RECEIVED
-            record.received_date = datetime.utcnow()
+            record.received_date = now_utc
 
         db.commit()
 
@@ -95,7 +97,7 @@ def complete_recycling(
 ):
     """
     Step 2: Recycler permanently terminates the device.
-    Executes a synchronous call to Algorand to burn the device state to RECYCLED[cite: 4, 7].
+    Executes a synchronous call to Algorand to burn the device state to RECYCLED.
     Generates the CPCB-compliant destruction certificate.
     """
     device = db.query(Device).filter(Device.id == payload.device_id).first()
@@ -122,24 +124,24 @@ def complete_recycling(
         cert_count = db.query(RecyclingRecord).filter(RecyclingRecord.certificate_id.isnot(None)).count()
         certificate_id = f"TRC-CERT-{cert_count + 1:05d}"
 
-        # 1.5. Pre-flight: confirm TRANSFERRED state on-chain (free simulate)
+        # 1.5. Pre-flight: confirm TRANSFERRED state on-chain
         if not ledger_service.can_recycle(device.id):
             raise HTTPException(
                 status_code=409,
                 detail="Chain pre-check failed: device must be in TRANSFERRED state on-chain to be recycled."
             )
 
-        # 3. Synchronous Blockchain Mutation (Pillar 1)
-        # Executes ARC-4 App call to officially terminate the device lifecycle
+        # 2. Synchronous Blockchain Mutation (Pillar 1)
         chain_result = ledger_service.mark_recycled(device_id=device.id)
 
         # 3. Web2 Database Updates (Terminal State)
         device.status = DeviceStatus.RECYCLED
-        device.stamp_valid = False  # Ensure it can never be verified again[cite: 4, 7]
+        device.stamp_valid = False
+        device.is_for_sale = False  # Guarantee it is pulled from listings
         
         record.recycling_status = RecyclingStatus.RECYCLED
         record.certificate_id = certificate_id
-        record.completion_date = datetime.utcnow()
+        record.completion_date = datetime.now(timezone.utc)  # FIX: Timezone aware
 
         db.commit()
 

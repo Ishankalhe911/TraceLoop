@@ -2,12 +2,13 @@ import os
 import uuid
 import enum
 from datetime import datetime
+from dotenv import load_dotenv
 from sqlalchemy import (
     create_engine, Column, String, Boolean, DateTime, Enum, 
     ForeignKey, BigInteger, Integer, JSON, Numeric, Text
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
-
+load_dotenv()
 # --- DATABASE CONFIGURATION ---
 # Default to SQLite for immediate zero-setup testing. 
 # To upgrade to PostgreSQL for production, simply change the .env variable to:
@@ -18,8 +19,12 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./traceloop.db")
 
 # SQLite requires specific threading arguments
 connect_args = {"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
-engine = create_engine(DATABASE_URL, connect_args=connect_args)
-
+engine = create_engine(
+    DATABASE_URL, 
+    connect_args=connect_args,
+    pool_pre_ping=True,  # Sends a silent "Hello?" before executing the real query
+    pool_recycle=300     # Proactively refreshes the connection every 5 minutes
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -148,6 +153,7 @@ class KYCDocument(Base):
     status = Column(Enum(DocStatus), default=DocStatus.PENDING, nullable=False)
     rejection_reason = Column(Text, nullable=True)
     reviewed_by = Column(String(36), ForeignKey("users.id"), nullable=True)
+    serial_for_device = Column(String(80), nullable=True) 
     reviewed_at = Column(DateTime(timezone=True), nullable=True)
     uploaded_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
@@ -175,7 +181,7 @@ class JWTSession(Base):
 
 # --- 3. DEVICE INTELLIGENCE MODELS (Pillar 3) ---
 class Device(Base):
-    """Matches Section 2.2 Devices Table[cite: 15]"""
+    """Matches Section 2.2 Devices Table"""
     __tablename__ = "devices"
 
     id = Column(String(40), primary_key=True, index=True) 
@@ -193,12 +199,16 @@ class Device(Base):
     status = Column(Enum(DeviceStatus), default=DeviceStatus.REGISTERED, nullable=False)
     stamp_valid = Column(Boolean, default=False)
     
+    # --- NEW MARKETPLACE FIELDS ---
+    is_for_sale = Column(Boolean, default=False)
+    asking_price = Column(Numeric(10, 2), nullable=True)
+    city = Column(String(60), nullable=True)
+    
     last_verified_at = Column(DateTime(timezone=True), nullable=True)
     last_verified_by = Column(String(36), ForeignKey("users.id"), nullable=True)
     
     registered_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
-
 class DeviceHardwareLog(Base):
     __tablename__ = "device_hardware_log"
     
@@ -327,7 +337,6 @@ class AdminAction(Base):
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
-
 # --- 6. ESG INCENTIVES (Custom Additions) ---
 class RewardPoint(Base):
     __tablename__ = "reward_points"
@@ -338,7 +347,7 @@ class RewardPoint(Base):
     action = Column(String(60), nullable=False)
     device_id = Column(String(40), nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-
+    
 class RecyclingRecord(Base):
     __tablename__ = "recycling_records"
     

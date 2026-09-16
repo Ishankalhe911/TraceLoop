@@ -1,563 +1,265 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-    <title>TRACE-LOOP | Register Laptop</title>
-
-    <link rel="stylesheet" href="css/style.css">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Create account · Trace-Loop</title>
+<link rel="stylesheet" href="css/style.css">
+<style>
+  /* ── Custom Dropzone Styles for Step 3 ── */
+  .dropzone {
+    border: 2px dashed var(--border);
+    border-radius: var(--radius-lg);
+    padding: 40px 20px;
+    text-align: center;
+    background: var(--off);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    margin-bottom: 16px;
+  }
+  .dropzone:hover, .dropzone.dragover {
+    border-color: var(--green);
+    background: var(--green-bg);
+  }
+  .dropzone.has-file {
+    border-style: solid;
+    border-color: var(--green);
+    background: var(--white);
+  }
+  .dz-icon {
+    font-size: 2.2rem;
+    margin-bottom: 12px;
+  }
+  #hash-preview {
+    background: var(--forest);
+    color: var(--white);
+    padding: 14px 16px;
+    border-radius: var(--radius);
+    margin-bottom: 20px;
+    font-size: 0.85rem;
+  }
+  #hash-value {
+    display: block;
+    color: var(--green);
+    font-family: 'Space Mono', monospace;
+    font-size: 0.75rem;
+    word-break: break-all;
+    margin-top: 6px;
+  }
+</style>
 </head>
+<body data-page="register">
 
-<body>
+<nav class="site-nav"></nav>
 
-    <!-- Navigation -->
-    <nav class="navbar">
+<div class="register-wrap">
+<div class="container" style="max-width:780px">
 
-        <div class="logo">
-            <span>TRACE</span>-LOOP
-        </div>
+  <span class="eyebrow">New account</span>
+  <h1 style="margin-bottom:8px">Join Trace-Loop</h1>
+  <p class="muted" style="margin-bottom:36px">
+    Choose your role, fill in your details, verify your phone, then submit the required KYC document.
+  </p>
 
-        <div class="nav-links">
-            <a href="index.html">Home</a>
-            <a href="dashboard.html">Dashboard</a>
-            <a href="register.html">Register</a>
-            <a href="#">Track</a>
-        </div>
+  <!-- Step indicator -->
+  <div class="step-indicator" id="step-indicator">
+    <div class="step-item active" id="si-1">
+      <div class="step-num">1</div>
+      <span>Role &amp; details</span>
+    </div>
+    <div class="step-line" id="sl-1"></div>
+    <div class="step-item" id="si-2">
+      <div class="step-num">2</div>
+      <span>Verify phone</span>
+    </div>
+    <div class="step-line" id="sl-2"></div>
+    <div class="step-item" id="si-3">
+      <div class="step-num">3</div>
+      <span>KYC document</span>
+    </div>
+  </div>
 
-        <button class="nav-button">
-            My Account
-        </button>
+  <!-- ── Step 1: Role + form ─── -->
+  <div class="card multi-step active" id="step-1">
 
-    </nav>
+    <h2 style="margin-bottom:20px">Choose your role</h2>
 
+    <div class="role-grid">
+      <div class="role-card" data-role="FIRST_BUYER">
+        <div class="role-icon">🧑‍💻</div>
+        <div class="role-name">First Buyer</div>
+        <div class="role-desc">Original purchaser from a retail or brand store</div>
+      </div>
+      <div class="role-card" data-role="BUYER">
+        <div class="role-icon">🛍️</div>
+        <div class="role-name">Buyer</div>
+        <div class="role-desc">Subsequent purchaser in the resale market</div>
+      </div>
+      <div class="role-card" data-role="RESELLER">
+        <div class="role-icon">🏪</div>
+        <div class="role-name">Reseller</div>
+        <div class="role-desc">Business entity trading verified used laptops</div>
+      </div>
+      <div class="role-card" data-role="VERIFIABLE">
+        <div class="role-icon">🔧</div>
+        <div class="role-name">Service Centre</div>
+        <div class="role-desc">Brand-authorized verification centre (admin approval)</div>
+      </div>
+      <div class="role-card" data-role="RECYCLER">
+        <div class="role-icon">♻️</div>
+        <div class="role-name">Recycler</div>
+        <div class="role-desc">CPCB-registered e-waste recycling facility</div>
+      </div>
+    </div>
 
-    <!-- Registration Page -->
-    <main class="register-page">
+    <div id="role-notice" style="display:none; margin-bottom:20px; margin-top:20px;"></div>
 
-        <div class="register-header">
+    <form id="register-form" class="form-grid" autocomplete="off">
+      <input type="hidden" id="role-field" name="role">
 
-            <span>DEVICE REGISTRATION</span>
+      <div class="form-2col">
+        <label>
+          Full name <span class="req">*</span>
+          <input name="name" id="reg-name" required maxlength="120" placeholder="As per ID">
+        </label>
+        <label>
+          Phone number <span class="req">*</span>
+          <!-- ID changed to reg-phone to match JS -->
+          <input name="phone" id="reg-phone" required maxlength="15" inputmode="tel" placeholder="+91 98765 43210">
+        </label>
+      </div>
 
-            <h1>Register a Laptop</h1>
+      <div class="form-2col">
+        <label>
+          Email address <span class="req">*</span>
+          <input type="email" name="email" required placeholder="name@example.com">
+        </label>
+        <label>
+          Aadhaar last 4 digits <span class="req">*</span>
+          <input name="aadhaar_last4" required minlength="4" maxlength="4" inputmode="numeric" placeholder="1234">
+        </label>
+      </div>
 
-            <p>
-                Create a unique digital identity for a used laptop
-                and begin its TRACE-LOOP lifecycle.
-            </p>
+      <!-- Dynamic Role-specific fields -->
+      <label class="role-required reseller-field" style="display:none; grid-column: 1 / -1">
+        GST Number <span class="req">*</span>
+        <input name="gst_number" placeholder="27XXXXX1234X1Z5">
+      </label>
+      
+      <label class="role-required recycler-field" style="display:none; grid-column: 1 / -1">
+        CPCB Registration Number <span class="req">*</span>
+        <input name="cpcb_number" placeholder="CPCB/E-WASTE/...">
+      </label>
+      
+      <div class="role-required verifiable-field form-2col" style="display:none; grid-column: 1 / -1">
+        <label>
+          Brand Auth Code <span class="req">*</span>
+          <input name="brand_auth_code" placeholder="DELL-AUTH-...">
+        </label>
+        <label>
+          Service Center ID <span class="req">*</span>
+          <input name="service_center_id" placeholder="SVC-1234">
+        </label>
+      </div>
 
-        </div>
+      <!-- ID changed to btn-create to match JS -->
+      <button class="button primary" type="submit" id="btn-create" disabled style="margin-top:8px">
+        Create account
+      </button>
+    </form>
 
+    <p class="muted" style="margin-top:20px">Already have an account? <a href="login.html">Sign in</a></p>
+  </div>
 
-        <div class="register-container">
+  <!-- ── Step 2: OTP ─── -->
+  <div class="card multi-step" id="step-2">
+    <span class="eyebrow">Step 2 of 3</span>
+    <h2 style="margin-bottom:8px">Verify your phone</h2>
+    <p class="muted" style="margin-bottom:24px">
+      OTP will be sent to <strong id="otp-phone-display" style="color:var(--forest)"></strong>
+    </p>
 
+    <!-- ID changed to btn-send-otp -->
+    <div style="display:flex;gap:12px;margin-bottom:24px;">
+      <button class="button secondary" id="btn-send-otp" type="button">Send OTP code</button>
+    </div>
 
-            <!-- Form -->
-            <section class="form-card">
+    <!-- ID changed to otp-preview-box -->
+    <div id="otp-preview-box" class="mono" style="display:none; background:var(--grey-bg); padding:12px; border-radius:8px; margin-bottom:24px; text-align:center; color:var(--forest)"></div>
 
-                <div class="form-title">
+    <div class="form-grid">
+      <label style="max-width:240px">
+        6-digit OTP
+        <!-- ID changed to otp-input -->
+        <input id="otp-input" placeholder="123456" maxlength="6" inputmode="numeric" autocomplete="one-time-code" style="text-align:center; font-size:1.2rem; letter-spacing:0.2em; font-family:'Space Mono', monospace">
+      </label>
+    </div>
 
-                    <div class="form-number">
-                        01
-                    </div>
+    <div style="margin-top:16px;">
+      <!-- ID changed to btn-verify-otp -->
+      <button class="button primary" id="btn-verify-otp" type="button" disabled>Verify & Continue</button>
+    </div>
+  </div>
 
-                    <div>
-                        <h2>Laptop Information</h2>
+  <!-- ── Step 3: KYC ─── -->
+  <div class="card multi-step" id="step-3">
+    <span class="eyebrow">Step 3 of 3</span>
+    <h2 style="margin-bottom:8px">Submit KYC document</h2>
+    <p class="muted" style="margin-bottom:24px">
+      Final step to activate your workspace.
+    </p>
 
-                        <p>
-                            Enter the basic details of the device.
-                        </p>
-                    </div>
+    <form id="kyc-form" class="form-grid">
+      <input type="hidden" id="kyc-doc-type" name="doc_type">
 
-                </div>
+      <!-- Dynamic Notice injected by JS -->
+      <div id="kyc-role-box" style="grid-column: 1 / -1;"></div>
 
+      <label id="kyc-serial-wrap" style="display:none; grid-column: 1 / -1; margin-bottom: 24px;">
+        Device Serial Number <span class="req">*</span>
+        <input type="text" id="kyc-serial" placeholder="e.g., 5CG1234XYZ" style="font-family:'Space Mono', monospace">
+      </label>
 
-                <form id="registerForm">
+      <!-- Drag and Drop Zone -->
+      <div class="dropzone" id="kyc-dropzone" style="grid-column: 1 / -1;" onclick="document.getElementById('kyc-file').click()">
+        <div class="dz-icon">📄</div>
+        <strong style="display:block; font-family:'Space Grotesk',sans-serif; margin-bottom:4px">Click to upload or drag and drop</strong>
+        <span class="muted" id="dz-filename">PDF, JPG, or PNG (max 5MB)</span>
+        <input type="file" id="kyc-file" accept=".pdf,.jpg,.jpeg,.png,.webp" style="display:none">
+      </div>
 
+      <!-- Live Hashing Preview -->
+      <div id="hash-preview" style="display:none; grid-column: 1 / -1;">
+        <strong>🔒 Cryptographic Hash Generated</strong>
+        <span id="hash-value"></span>
+      </div>
 
-                    <div class="form-group">
+      <button class="button primary" type="submit" id="btn-kyc-submit" disabled style="margin-top:8px">Submit for Admin Review</button>
+    </form>
 
-                        <label for="deviceType">
-                            Device Type
-                        </label>
+    <div id="kyc-result" style="margin-top:16px"></div>
 
-                        <select id="deviceType" required>
-
-                            <option value="">
-                                Select device type
-                            </option>
-
-                            <option value="Laptop">
-                                Laptop
-                            </option>
-
-                        </select>
-
-                    </div>
-
-
-                    <div class="form-row">
-
-                        <div class="form-group">
-
-                            <label for="brand">
-                                Brand
-                            </label>
-
-                            <input
-                                type="text"
-                                id="brand"
-                                placeholder="e.g. Dell"
-                                required
-                            >
-
-                        </div>
-
-
-                        <div class="form-group">
-
-                            <label for="model">
-                                Model
-                            </label>
-
-                            <input
-                                type="text"
-                                id="model"
-                                placeholder="e.g. Inspiron 15"
-                                required
-                            >
-
-                        </div>
-
-                    </div>
-
-
-                    <div class="form-group">
-
-                        <div class="form-group">
-
-    <label for="serialNumber">
-        Serial Number
-    </label>
-
-    <input
-        type="text"
-        id="serialNumber"
-        placeholder="Enter laptop serial number"
-        required
-    >
-
-    <small>
-        The serial number helps uniquely identify
-        the physical device.
-    </small>
+    <div id="kyc-done" style="display:none; margin-top:20px">
+      <div class="notice success">
+        <strong>Account created and KYC submitted.</strong><br>
+        You can now sign in. Admin-approval roles (VERIFIABLE / RECYCLER) require manual activation.
+      </div>
+      <a class="button primary" href="dashboard.html" style="margin-top:16px;display:inline-flex">Go to Workspace</a>
+    </div>
+  </div>
 
 </div>
-
-
-                    <div class="form-divider"></div>
-
-
-                    <div class="form-title">
-
-                        <div class="form-number">
-                            02
-                        </div>
-
-                        <div>
-                            <h2>Ownership Information</h2>
-
-                            <p>
-                                Information about the current owner.
-                            </p>
-                        </div>
-
-                    </div>
-
-
-                    <div class="form-row">
-
-                        <div class="form-group">
-
-                            <label for="ownerName">
-                                Owner Name
-                            </label>
-
-                            <input
-                                type="text"
-                                id="ownerName"
-                                placeholder="Enter owner name"
-                                required
-                            >
-
-                        </div>
-
-
-                        <div class="form-group">
-
-                            <label for="ownerEmail">
-                                Owner Email
-                            </label>
-
-                            <input
-                                type="email"
-                                id="ownerEmail"
-                                placeholder="Enter email"
-                                required
-                            >
-
-                        </div>
-
-                    </div>
-
-
-                    <div class="form-actions">
-
-                        <button
-                            type="button"
-                            class="cancel-button"
-                            onclick="window.location.href='dashboard.html'">
-
-                            Cancel
-
-                        </button>
-
-
-                        <button
-                            type="submit"
-                            class="primary-button">
-
-                            Register Laptop →
-
-                        </button>
-
-                    </div>
-
-
-                </form>
-
-            </section>
-
-
-            <!-- Information Card -->
-            <aside class="info-card">
-
-                <div class="info-icon">
-                    💻
-                </div>
-
-                <h2>Digital Laptop Passport</h2>
-
-                <p>
-                    Once registered, this laptop will receive a
-                    unique TRACE-LOOP Device ID.
-                </p>
-
-
-                <div class="passport-example">
-
-                    <small>EXAMPLE DEVICE ID</small>
-
-                    <strong>TL000001</strong>
-
-                </div>
-
-
-                <div class="info-list">
-
-                    <div>
-                        <span>✓</span>
-                        Unique device identity
-                    </div>
-
-                    <div>
-                        <span>✓</span>
-                        Traceable lifecycle
-                    </div>
-
-                    <div>
-                        <span>✓</span>
-                        Verified ownership records
-                    </div>
-
-                    <div>
-                        <span>✓</span>
-                        Secure lifecycle history
-                    </div>
-
-                </div>
-
-            </aside>
-
-        </div>
-
-    </main>
-
-
-    <script src="js/script.js"></script>
-
-</body>
-</html>
-        <div class="register-header">
-
-            <span>DEVICE REGISTRATION</span>
-
-            <h1>Register a Laptop</h1>
-
-            <p>
-                Create a unique digital identity for a used laptop
-                and begin its TRACE-LOOP lifecycle.
-            </p>
-
-        </div>
-
-
-        <div class="register-container">
-
-
-            <!-- Form -->
-            <section class="form-card">
-
-                <div class="form-title">
-
-                    <div class="form-number">
-                        01
-                    </div>
-
-                    <div>
-                        <h2>Laptop Information</h2>
-
-                        <p>
-                            Enter the basic details of the device.
-                        </p>
-                    </div>
-
-                </div>
-
-
-                <form id="registerForm">
-
-
-                    <div class="form-group">
-
-                        <label for="deviceType">
-                            Device Type
-                        </label>
-
-                        <select id="deviceType" required>
-
-                            <option value="">
-                                Select device type
-                            </option>
-
-                            <option value="Laptop">
-                                Laptop
-                            </option>
-
-                        </select>
-
-                    </div>
-
-
-                    <div class="form-row">
-
-                        <div class="form-group">
-
-                            <label for="brand">
-                                Brand
-                            </label>
-
-                            <input
-                                type="text"
-                                id="brand"
-                                placeholder="e.g. Dell"
-                                required
-                            >
-
-                        </div>
-
-
-                        <div class="form-group">
-
-                            <label for="model">
-                                Model
-                            </label>
-
-                            <input
-                                type="text"
-                                id="model"
-                                placeholder="e.g. Inspiron 15"
-                                required
-                            >
-
-                        </div>
-
-                    </div>
-
-
-                    <div class="form-group">
-
-                        <div class="form-group">
-
-    <label for="serialNumber">
-        Serial Number
-    </label>
-
-    <input
-        type="text"
-        id="serialNumber"
-        placeholder="Enter laptop serial number"
-        required
-    >
-
-    <small>
-        The serial number helps uniquely identify
-        the physical device.
-    </small>
-
 </div>
 
+<footer class="site-footer">
+  <div class="container">
+    <div class="footer-inner">
+      <span>Trace-Loop · IEEE YESIST12 2026</span>
+      <a href="login.html">Already registered? Sign in</a>
+    </div>
+  </div>
+</footer>
 
-                    <div class="form-divider"></div>
-
-
-                    <div class="form-title">
-
-                        <div class="form-number">
-                            02
-                        </div>
-
-                        <div>
-                            <h2>Ownership Information</h2>
-
-                            <p>
-                                Information about the current owner.
-                            </p>
-                        </div>
-
-                    </div>
-
-
-                    <div class="form-row">
-
-                        <div class="form-group">
-
-                            <label for="ownerName">
-                                Owner Name
-                            </label>
-
-                            <input
-                                type="text"
-                                id="ownerName"
-                                placeholder="Enter owner name"
-                                required
-                            >
-
-                        </div>
-
-
-                        <div class="form-group">
-
-                            <label for="ownerEmail">
-                                Owner Email
-                            </label>
-
-                            <input
-                                type="email"
-                                id="ownerEmail"
-                                placeholder="Enter email"
-                                required
-                            >
-
-                        </div>
-
-                    </div>
-
-
-                    <div class="form-actions">
-
-                        <button
-                            type="button"
-                            class="cancel-button"
-                            onclick="window.location.href='dashboard.html'">
-
-                            Cancel
-
-                        </button>
-
-
-                        <button
-                            type="submit"
-                            class="primary-button">
-
-                            Register Laptop →
-
-                        </button>
-
-                    </div>
-
-
-                </form>
-
-            </section>
-
-
-            <!-- Information Card -->
-            <aside class="info-card">
-
-                <div class="info-icon">
-                    💻
-                </div>
-
-                <h2>Digital Laptop Passport</h2>
-
-                <p>
-                    Once registered, this laptop will receive a
-                    unique TRACE-LOOP Device ID.
-                </p>
-
-
-                <div class="passport-example">
-
-                    <small>EXAMPLE DEVICE ID</small>
-
-                    <strong>TL000001</strong>
-
-                </div>
-
-
-                <div class="info-list">
-
-                    <div>
-                        <span>✓</span>
-                        Unique device identity
-                    </div>
-
-                    <div>
-                        <span>✓</span>
-                        Traceable lifecycle
-                    </div>
-
-                    <div>
-                        <span>✓</span>
-                        Verified ownership records
-                    </div>
-
-                    <div>
-                        <span>✓</span>
-                        Secure lifecycle history
-                    </div>
-
-                </div>
-
-            </aside>
-
-        </div>
-
-    </main>
-
-
-    <script src="js/script.js"></script>
-
+<script src="js/script.js"></script>
 </body>
 </html>
