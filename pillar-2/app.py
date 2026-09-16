@@ -86,7 +86,15 @@ app = FastAPI(
 )
 
 # --- CORS ---
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000","https://traceloop-beta.vercel.app").split(",")
+# ✅ FIXED: Single string split by commas, with whitespace stripped
+ALLOWED_ORIGINS = [
+    origin.strip() 
+    for origin in os.getenv(
+        "ALLOWED_ORIGINS", 
+        "http://localhost:3000,https://traceloop-beta.vercel.app"
+    ).split(",") 
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -114,7 +122,7 @@ app.include_router(manufacturer_router)
 
 # --- HEALTH CHECK ---
 @app.get("/", tags=["Health"])
-@app.head("/health")
+@app.head("/Health")
 def root():
     return {
         "status": "success",
