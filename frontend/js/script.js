@@ -761,7 +761,8 @@ async function loadMyDevices() {
             <a class="button ghost small" href="track.html?id=${encodeURIComponent(x.device_id)}">View passport</a>
             ${x.is_for_sale
               ? `<button class="button danger small" data-unlist="${esc(x.device_id)}">Unlist</button>`
-              : `<button class="button secondary small" data-list="${esc(x.device_id)}">List for sale</button>`
+              // THE FIX: Disable the List button if the stamp is not valid
+              : `<button class="button secondary small" data-list="${esc(x.device_id)}" ${x.stamp_valid ? '' : 'disabled title="Device must be physically audited before listing for sale"'}>List for sale</button>`
             }
             <button class="button ghost small" data-transfer="${esc(x.device_id)}">Transfer</button>
           </div>
@@ -769,13 +770,13 @@ async function loadMyDevices() {
       : empty('No devices yet', 'Register a laptop or receive a verified transfer.');
 
     $$('[data-list]',    el).forEach(b => b.addEventListener('click', () => openListModal(b.dataset.list)));
-    $$('[data-unlist]',  el).forEach(b => b.addEventListener('click', () => unlistDevice(b.dataset.unlist)));
-    $$('[data-transfer]',el).forEach(b => b.addEventListener('click', () => initiateTransfer(b.dataset.transfer)));
+    // THE FIX: Pass the button element to the functions so we can trigger the loading state
+    $$('[data-unlist]',  el).forEach(b => b.addEventListener('click', () => unlistDevice(b.dataset.unlist, b)));
+    $$('[data-transfer]',el).forEach(b => b.addEventListener('click', () => initiateTransfer(b.dataset.transfer, b)));
   } catch (e) {
     el.innerHTML = empty('Unable to load devices', e.message);
   }
 }
-
 // Opens the DPDPA consent modal
 function openListModal(id) {
   const modal = $('#list-modal');
@@ -816,18 +817,22 @@ function wireListModal() {
   });
 }
 
-async function unlistDevice(id) {
+async function unlistDevice(id, btn) {
   if (!confirm(`Remove ${id} from the marketplace?`)) return;
+  setBusy(btn, true, 'Unlisting…');
   try {
     await api(`/transfers/unlist/${encodeURIComponent(id)}`, { method: 'POST' });
     toast('Removed from marketplace.');
     loadMyDevices();
   } catch (e) { toast(e.message, 'error'); }
+  finally { setBusy(btn, false); }
 }
 
-async function initiateTransfer(id) {
+// THE FIX: Add 'btn' parameter and setBusy block
+async function initiateTransfer(id, btn) {
   const to = prompt(`Enter the receiver's Trace-Loop user ID to initiate transfer of ${id}:`);
   if (!to) return;
+  setBusy(btn, true, 'Initiating…');
   try {
     const d = envelope(await api('/transfers/initiate', {
       method: 'POST', body: JSON.stringify({ device_id: id, to_user_id: to })
@@ -836,8 +841,8 @@ async function initiateTransfer(id) {
     loadMyDevices();
     loadIncoming();
   } catch (e) { toast(e.message, 'error'); }
+  finally { setBusy(btn, false); }
 }
-
 /* ── Incoming transfers ──────────────────────────────────────── */
 async function loadIncoming() {
   const el = $('#incoming');
@@ -864,14 +869,17 @@ async function loadIncoming() {
         </article>`).join('')
       : empty('No incoming transfers', 'Accepted handoffs will appear here.');
 
-    $$('[data-accept]', el).forEach(b => b.addEventListener('click', () => transferAction(b.dataset.accept, 'accept')));
-    $$('[data-cancel]', el).forEach(b => b.addEventListener('click', () => transferAction(b.dataset.cancel, 'cancel')));
+    // THE FIX: Pass the button to the action function
+    $$('[data-accept]', el).forEach(b => b.addEventListener('click', () => transferAction(b.dataset.accept, 'accept', b)));
+    $$('[data-cancel]', el).forEach(b => b.addEventListener('click', () => transferAction(b.dataset.cancel, 'cancel', b)));
   } catch (e) {
     el.innerHTML = empty('Unable to load transfers', e.message);
   }
 }
 
-async function transferAction(id, action) {
+// THE FIX: Apply setBusy so users cannot click Accept twice
+async function transferAction(id, action, btn) {
+  setBusy(btn, true, 'Writing to chain…');
   try {
     await api(`/transfers/${id}/${action}`, { method: 'POST' });
     if (action === 'accept') {
@@ -882,6 +890,7 @@ async function transferAction(id, action) {
     loadIncoming();
     if (action === 'accept') loadMyDevices();
   } catch (e) { toast(e.message, 'error'); }
+  finally { setBusy(btn, false); }
 }
 
 /* ── My disputes ─────────────────────────────────────────────── */
@@ -975,7 +984,8 @@ async function loadPendingCompletion() {
             <button class="button primary small" data-complete="${esc(x.transfer_id)}">Complete transfer</button>
           </div>
         </article>`).join('')
-      : empty('Queue is clear', 'Transfers awaiting physical inspection appear here.');
+      // THE FIX: Clean empty state for the Verifier
+      : empty('Queue is clear', 'No physical audits pending. Facility clear.');
 
     $$('[data-complete]', el).forEach(b => b.addEventListener('click', async () => {
       setBusy(b, true, 'Executing…');
@@ -1020,17 +1030,22 @@ async function loadAdminDisputes() {
           </div>
         </div>`).join('')
       : empty('No open disputes', 'All disputes resolved.');
-    $$('[data-resolve]', el).forEach(b => b.addEventListener('click', () => adminResolveDispute(b.dataset.resolve)));
+      
+    // EXACT PLACEMENT: It must go here, right after el.innerHTML creates the buttons!
+    $$('[data-resolve]', el).forEach(b => b.addEventListener('click', () => adminResolveDispute(b.dataset.resolve, b)));
+    
   } catch (e) { el.innerHTML = empty('Error', e.message); }
 }
 
-async function adminResolveDispute(id) {
+async function adminResolveDispute(id, btn) {
   const note  = prompt('Resolution note (required):');
   if (!note) return;
   const state = prompt('Resolve to state: REGISTERED / VERIFIED / TRANSFERRED', 'REGISTERED');
   if (!['REGISTERED', 'VERIFIED', 'TRANSFERRED'].includes(state?.toUpperCase())) {
     toast('Invalid state.', 'error'); return;
   }
+  
+  setBusy(btn, true, 'Resolving…');
   try {
     await api(`/disputes/${id}/resolve`, {
       method: 'PATCH',
@@ -1039,6 +1054,7 @@ async function adminResolveDispute(id) {
     toast('Dispute resolved.');
     loadAdminDisputes();
   } catch (e) { toast(e.message, 'error'); }
+  finally { setBusy(btn, false); }
 }
 
 async function loadAdminApprovals() {
@@ -1046,9 +1062,6 @@ async function loadAdminApprovals() {
   if (!el) return;
   try {
     const d = envelope(await api('/admin/approvals/pending'));
-    
-    // ── BULLETPROOF ARRAY EXTRACTION ──
-    // This automatically finds the array regardless of what key the backend uses
     const list = d.approvals || d.users || d.data || d.items || (Array.isArray(d) ? d : Object.values(d).find(Array.isArray) || []);
     
     $('#cnt-approvals').textContent = list.length;
@@ -1067,24 +1080,26 @@ async function loadAdminApprovals() {
             <button class="button danger small"  data-reject="${esc(x.user_id || x.id)}">Reject</button>
           </div>
         </div>`).join('')
-      : empty('No pending approvals', 'All accounts processed.');
+      // THE FIX: Clean empty state
+      : empty('No pending approvals', 'Zero accounts awaiting manual review.');
       
-    $$('[data-approve]', el).forEach(b => b.addEventListener('click', () => adminApprove(b.dataset.approve, 'approve')));
-    $$('[data-reject]',  el).forEach(b => b.addEventListener('click', () => adminApprove(b.dataset.reject, 'reject')));
+    // THE FIX: Passed 'b' to the function
+    $$('[data-approve]', el).forEach(b => b.addEventListener('click', () => adminApprove(b.dataset.approve, 'approve', b)));
+    $$('[data-reject]',  el).forEach(b => b.addEventListener('click', () => adminApprove(b.dataset.reject, 'reject', b)));
   } catch (e) { el.innerHTML = empty('Error', e.message); }
 }
 
-// Replace this function
-async function adminApprove(id, action) {
+async function adminApprove(id, action, btn) {
+  setBusy(btn, true, 'Working…');
   try {
     await api(`/admin/approvals/${id}/${action}`, { 
       method: 'POST',
-      // THE FIX: Send the exact Pydantic schema FastAPI expects for Account Approval!
       body: JSON.stringify({ notes: "Admin reviewed via dashboard" }) 
     });
     toast(`Account ${action}d.`);
     loadAdminApprovals();
   } catch (e) { toast(e.message, 'error'); }
+  finally { setBusy(btn, false); }
 }
 /* ── ADMIN KYC MANAGEMENT ────────────────────────────────────── */
 async function loadAdminKyc() {
@@ -1092,8 +1107,6 @@ async function loadAdminKyc() {
   if (!el) return;
   try {
     const d = envelope(await api('/admin/kyc/pending'));
-    
-    // Explicitly targets 'pending_documents' from your Python output
     const list = d.pending_documents || d.documents || (Array.isArray(d) ? d : Object.values(d).find(Array.isArray) || []);
     
     $('#cnt-kyc').textContent = list.length;
@@ -1103,7 +1116,7 @@ async function loadAdminKyc() {
         <div class="transfer-row">
           <div>
             <strong>${esc(x.doc_type || 'Document')}</strong>
-            <p class="muted" style="font-size:.82rem">User ${esc(x.user_id)} · ${fmtDate(x.uploaded_at)}</p>
+            <p class="muted" style="font-size:.82rem">User ${esc(x.user_id)} · ${fmtDate(x.uploaded_at || x.created_at)}</p>
             ${x.serial_for_device ? `<p class="muted" style="font-size:.78rem">Serial on file: <span class="mono" style="color:var(--green)">${esc(x.serial_for_device)}</span></p>` : ''}
             ${x.file_hash ? `<p class="muted" style="font-size:.75rem;font-family:'Space Mono',monospace;margin-top:4px;">🔒 Hash: <span style="color:var(--green)">${esc(x.file_hash.slice(0, 24))}...</span></p>` : ''}
           </div>
@@ -1113,15 +1126,17 @@ async function loadAdminKyc() {
             <button class="button danger small"  data-kyc-reject="${esc(x.doc_id || x.id)}">Reject</button>
           </div>
         </div>`).join('')
-      : empty('KYC queue is clear', 'No documents pending review.');
+      // THE FIX: Clean empty state
+      : empty('KYC queue is clear', 'Zero pending documents. All users verified.');
 
-    $$('[data-kyc-approve]', el).forEach(b => b.addEventListener('click', () => adminKycReview(b.dataset.kycApprove, 'approve')));
-    $$('[data-kyc-reject]',  el).forEach(b => b.addEventListener('click', () => adminKycReview(b.dataset.kycReject, 'reject')));
+    // THE FIX: Passed 'b' to the function
+    $$('[data-kyc-approve]', el).forEach(b => b.addEventListener('click', () => adminKycReview(b.dataset.kycApprove, 'approve', b)));
+    $$('[data-kyc-reject]',  el).forEach(b => b.addEventListener('click', () => adminKycReview(b.dataset.kycReject, 'reject', b)));
   } catch (e) { el.innerHTML = empty('Error', e.message); }
 }
 
 // Replace this function
-async function adminKycReview(docId, action) {
+async function adminKycReview(docId, action, btn) {
   const note = action === 'reject' ? prompt('Rejection reason (required):') : null;
   
   if (action === 'reject' && !note) {
@@ -1131,10 +1146,10 @@ async function adminKycReview(docId, action) {
 
   const decisionVal = action === 'approve' ? 'ACCEPT' : 'REJECT';
   
-  // THE FIX: Build payload dynamically so we don't send nulls to strict Pydantic models
   const payload = { decision: decisionVal };
   if (note) payload.rejection_reason = note;
 
+  setBusy(btn, true, 'Processing…');
   try {
     await api(`/admin/kyc/${docId}/review`, {
       method: 'POST',
@@ -1144,6 +1159,7 @@ async function adminKycReview(docId, action) {
     toast(`Document successfully ${action}d.`);
     loadAdminKyc();
   } catch (e) { toast(e.message, 'error'); }
+  finally { setBusy(btn, false); }
 }
 
 async function loadAdminDevices() {
@@ -1170,13 +1186,18 @@ async function loadAdminDevices() {
           </div>
         </div>`).join('')
       : empty('No devices', 'No devices in the registry.');
+      
     $$('[data-export]', el).forEach(b => b.addEventListener('click', async () => {
       if (!confirm(`Mark ${b.dataset.export} as EXPORTED? This is terminal.`)) return;
+      
+      // THE FIX: Inline setBusy for the export button
+      setBusy(b, true, 'Exporting…');
       try {
         await api(`/admin/devices/${encodeURIComponent(b.dataset.export)}/export`, { method: 'POST' });
         toast('Device marked as EXPORTED.');
         loadAdminDevices();
       } catch (e) { toast(e.message, 'error'); }
+      finally { setBusy(b, false); }
     }));
   } catch (e) { el.innerHTML = empty('Error', e.message); }
 }
