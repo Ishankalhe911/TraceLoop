@@ -153,14 +153,17 @@ class SubscriberDaemon:
         self.last_round = self._load_watermark()
 
     def _load_watermark(self) -> int:
-        if os.path.exists("subscriber_watermark.txt"):
-            with open("subscriber_watermark.txt", "r") as f:
-                val = f.read().strip()
-                if val:
-                    return int(val)
-        # First run: start from deployment round, not genesis
-        logger.info(f"No watermark found. Starting from round {START_ROUND}.")
-        return START_ROUND
+      if os.path.exists("subscriber_watermark.txt"):
+        with open("subscriber_watermark.txt", "r") as f:
+            val = f.read().strip()
+            if val:
+                saved = int(val)
+                # If saved watermark is before deployment, ignore it
+                if saved >= START_ROUND:
+                    return saved
+                logger.info(f"Stale watermark {saved} < START_ROUND {START_ROUND}. Resetting.")
+      logger.info(f"No watermark found. Starting from round {START_ROUND}.")
+      return START_ROUND
 
     def _save_watermark(self, round_num: int):
         with open("subscriber_watermark.txt", "w") as f:
