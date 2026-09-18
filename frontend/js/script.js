@@ -1323,7 +1323,11 @@ let allListings = [];
 async function initTransfer() {
   const g = $('#marketplace');
   try {
-    const d = envelope(await api('/transfers/marketplace', { auth: false }));
+    // Route logged-in users to /auth, and guests to the public endpoint
+      const path = token() ? '/transfers/marketplace/auth' : '/transfers/marketplace';
+      const options = token() ? {} : { auth: false };
+
+      const d = envelope(await api(path, options));
     allListings = d.listings || (Array.isArray(d) ? d : []);
     renderListings(allListings);
     $('#listing-count').textContent = `${allListings.length} verified listing${allListings.length !== 1 ? 's' : ''}`;

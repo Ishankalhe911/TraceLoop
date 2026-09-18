@@ -127,7 +127,48 @@ def unlist_device(
         "message": "Device removed from marketplace."
     })
 
+@router.get("/marketplace/auth")
+def get_marketplace_listings_auth(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)  # Strict auth enforcement
+):
+    """
+    Authenticated marketplace: returns seller phone numbers exclusively for logged-in users.
+    DPDPA Compliant: PII is only exposed to verified accounts, not public scrapers.
+    """
+    devices = db.query(Device).filter(
+        Device.is_for_sale == True,
+        Device.stamp_valid == True
+    ).all()
 
+    results = []
+    for d in devices:
+        # Auto-expire stale stamps (READ ONLY - NO DB COMMITS HERE)
+        if d.last_verified_at:
+            verified_at = make_aware(d.last_verified_at)
+            if datetime.now(timezone.utc) > (verified_at + timedelta(days=7)):
+                continue
+
+        # Fetch the owner securely to attach their phone number
+        owner = db.query(User).filter(User.id == d.current_owner_id).first()
+        
+        results.append({
+            "device_id": d.id,
+            "brand": d.brand_name,
+            "city": d.city,
+            "asking_price": float(d.asking_price) if d.asking_price else None,
+            "current_config": d.current_config,
+            "stamp_valid": d.stamp_valid,
+            "last_verified_at": make_aware(d.last_verified_at).isoformat() if d.last_verified_at else None,
+            "registered_at": make_aware(d.registered_at).isoformat() if d.registered_at else None,
+            
+            # THE FIX: Phone number is exposed ONLY because current_user is authenticated
+            "seller_phone": owner.phone if owner else None, 
+            
+            "blockchain_note": "Config and ownership verified on Algorand TestNet."
+        })
+
+    return standard_response({"total": len(results), "listings": results})
 @router.get("/marketplace")
 def get_marketplace_listings(db: Session = Depends(get_db)):
     """
