@@ -6,7 +6,8 @@ import struct
 import uuid
 from datetime import datetime
 from algosdk.v2client import indexer
-from algosdk.abi import Method
+from algosdk.encoding import checksum
+
 from algosdk.encoding import encode_address
 
 # Wired directly to the compliant PostgreSQL database.py
@@ -23,9 +24,10 @@ START_ROUND = int(os.getenv("SUBSCRIBER_START_ROUND", "50000000"))
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("TraceLoopSubscriber")
 
-
 def get_selector(signature: str) -> bytes:
-    return Method.from_signature(signature).get_selector()
+    # ARC-28 event selector: first 4 bytes of sha512/256 of the signature string
+    # Cannot use Method.from_signature() — that requires a return type (ARC-4 methods only)
+    return checksum(signature.encode("utf-8"))[:4]
 
 
 # --- PuyaPy ARC-4 manual decoders ---
