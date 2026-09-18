@@ -29,18 +29,15 @@ logger = logging.getLogger("TraceLoop")
 
 # --- SUBSCRIBER DAEMON (background thread) ---
 def _start_subscriber():
-    """
-    Runs the Algorand event subscriber in a daemon thread.
-    Polls Algorand Indexer every 5s, mirrors ARC-28 events to PostgreSQL.
-    Must not block the FastAPI startup.
-    """
     try:
         from services.subscriber_service import SubscriberDaemon
         daemon = SubscriberDaemon()
         logger.info("Subscriber daemon starting...")
         daemon.start()
     except Exception as e:
+        import traceback
         logger.error(f"Subscriber daemon crashed: {e}")
+        logger.error(traceback.format_exc())
 
 # --- LIFESPAN (startup / shutdown) ---
 @asynccontextmanager
