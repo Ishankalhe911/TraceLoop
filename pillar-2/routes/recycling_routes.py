@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -120,21 +121,20 @@ def complete_recycling(
         raise HTTPException(status_code=400, detail="Invalid recycling record state or already recycled.")
 
     try:
-        # 1. Generate compliant Certificate ID
-        cert_count = db.query(RecyclingRecord).filter(RecyclingRecord.certificate_id.isnot(None)).count()
-        certificate_id = f"TRC-CERT-{cert_count + 1:05d}"
+        # FIX #6: UUID-based certificate ID — eliminates race condition from count-based approach
+        certificate_id = f"TRC-CERT-{uuid.uuid4().hex[:8].upper()}"
 
-        # 1.5. Pre-flight: confirm TRANSFERRED state on-chain
+        # Pre-flight: confirm TRANSFERRED state on-chain
         if not ledger_service.can_recycle(device.id):
             raise HTTPException(
                 status_code=409,
                 detail="Chain pre-check failed: device must be in TRANSFERRED state on-chain to be recycled."
             )
 
-        # 2. Synchronous Blockchain Mutation (Pillar 1)
+        # Synchronous Blockchain Mutation (Pillar 1)
         chain_result = ledger_service.mark_recycled(device_id=device.id)
 
-        # 3. Web2 Database Updates (Terminal State)
+        # Web2 Database Updates (Terminal State)
         device.status = DeviceStatus.RECYCLED
         device.stamp_valid = False
         device.is_for_sale = False  # Guarantee it is pulled from listings

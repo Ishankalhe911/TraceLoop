@@ -76,6 +76,24 @@ def approve_account(
     if target_user.status == UserStatus.ACTIVE:
         raise HTTPException(status_code=400, detail="Account is already active.")
 
+    # FIX #15: Ensure required KYC document exists before approving
+    role_doc_map = {
+        UserRole.VERIFIABLE: DocType.BRAND_AUTH,
+        UserRole.RECYCLER: DocType.CPCB_CERT,
+    }
+    required_doc_type = role_doc_map.get(target_user.role)
+    if required_doc_type:
+        doc = db.query(KYCDocument).filter(
+            KYCDocument.user_id == target_user_id,
+            KYCDocument.doc_type == required_doc_type,
+            KYCDocument.status.in_([DocStatus.PENDING, DocStatus.ACCEPTED])
+        ).first()
+        if not doc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{target_user.role.value} must upload {required_doc_type.value} before approval can be granted."
+            )
+
     try:
         target_user.status = UserStatus.ACTIVE
         target_user.admin_approved = True

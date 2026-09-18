@@ -168,7 +168,10 @@ def verify_otp(payload: OTPVerifyPayload, db: Session = Depends(get_db)):
     verify_otp_session(phone=payload.phone, otp_code=payload.otp_code, db=db)
 
     if user.status == UserStatus.PENDING:
-        user.status = UserStatus.KYC_IN_PROGRESS
+        if user.role == UserRole.BUYER:
+            user.status = UserStatus.ACTIVE
+        else:
+            user.status = UserStatus.KYC_IN_PROGRESS
     db.commit()
 
     tokens = issue_tokens(

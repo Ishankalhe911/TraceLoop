@@ -4,8 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from typing import Optional
-
-from database import get_db, Device, Transfer, User, UserRole, DeviceStatus, TransferStatus
+from database import get_db, Device, Transfer, User, UserRole, DeviceStatus, TransferStatus, UserStatus
 from auth import get_current_user, RequireRole
 from services.ledger_service import ledger_service
 
@@ -142,17 +141,13 @@ def get_marketplace_listings(db: Session = Depends(get_db)):
 
     results = []
     for d in devices:
-        # Auto-expire stale stamps
+        # Auto-expire stale stamps (READ ONLY - NO DB COMMITS HERE)
         if d.last_verified_at:
             verified_at = make_aware(d.last_verified_at)
+            # If stamp is older than 7 days, we simply skip showing it on the marketplace.
+            # We do NOT run db.commit() here anymore, protecting the database from crashing on reads.
             if datetime.now(timezone.utc) > (verified_at + timedelta(days=7)):
-                d.is_for_sale = False
-                d.stamp_valid = False
-                db.commit()
                 continue
-
-        # ---> FIX PART 1: Fetch the owner from the database <---
-        owner = db.query(User).filter(User.id == d.current_owner_id).first()
 
         results.append({
             "device_id": d.id,
@@ -164,8 +159,8 @@ def get_marketplace_listings(db: Session = Depends(get_db)):
             "last_verified_at": make_aware(d.last_verified_at).isoformat() if d.last_verified_at else None,
             "registered_at": make_aware(d.registered_at).isoformat() if d.registered_at else None,
             
-            # ---> FIX PART 2: Add the phone number to the response <---
-            "seller_phone": owner.phone if owner else None,
+            # NOTE: seller_phone and owner lookup have been completely removed!
+            # This ensures 100% compliance with DPDPA privacy laws.
             
             "blockchain_note": "Config and ownership verified on Algorand TestNet. "
             "Inspect device physically and verify config_hash matches."
@@ -198,7 +193,7 @@ def initiate_transfer(
     verify_stamp_validity(device, db)
 
     receiver = db.query(User).filter(User.id == payload.to_user_id).first()
-    if not receiver or receiver.status != "ACTIVE":
+    if not receiver or receiver.status != UserStatus.ACTIVE:
         raise HTTPException(status_code=404, detail="Receiver not found or account is not active.")
 
     # Check no active transfer already pending for this device
@@ -212,6 +207,30 @@ def initiate_transfer(
             detail="An active transfer already exists for this device. Cancel it before initiating a new one."
         )
 
+    # --- FRAUD SIGNAL 1: Transfer Velocity ---
+    # SOP Section 5.3: >2 outgoing transfers from same BUYER in 30 days → flag
+    velocity_flagged = False
+    if current_user.role == UserRole.BUYER:
+        thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
+        recent_outgoing = db.query(Transfer).filter(
+            Transfer.from_user_id == current_user.id,
+            Transfer.initiated_at >= thirty_days_ago,
+            Transfer.status != TransferStatus.CANCELLED
+        ).count()
+        if recent_outgoing > 2:
+            velocity_flagged = True
+
+    # --- FRAUD SIGNAL 2: Device Count ---
+    # SOP Section 5.3: receiver holding >3 active devices as BUYER → flag
+    count_flagged = False
+    if receiver.role == UserRole.BUYER:
+        active_device_count = db.query(Device).filter(
+            Device.current_owner_id == payload.to_user_id,
+            Device.status.notin_([DeviceStatus.RECYCLED, DeviceStatus.EXPORTED])
+        ).count()
+        if active_device_count > 3:
+            count_flagged = True
+
     # Pull off marketplace — P2P deal initiated
     device.is_for_sale = False
 
@@ -220,7 +239,9 @@ def initiate_transfer(
             device_id=payload.device_id,
             from_user_id=current_user.id,
             to_user_id=payload.to_user_id,
-            status=TransferStatus.PENDING
+            status=TransferStatus.PENDING,
+            velocity_flagged=velocity_flagged,
+            count_flagged=count_flagged
         )
         db.add(new_transfer)
         db.commit()
@@ -231,6 +252,8 @@ def initiate_transfer(
             "device_id": payload.device_id,
             "to_user_id": payload.to_user_id,
             "status": new_transfer.status,
+            "velocity_flagged": velocity_flagged,
+            "count_flagged": count_flagged,
             "message": "Transfer initiated. Awaiting buyer acceptance."
         }, 201)
 
@@ -297,6 +320,7 @@ def get_transfers_pending_completion(
         "total_pending": len(results),
         "transfers_to_complete": results
     })
+
 @router.post("/{transfer_id}/accept")
 def accept_transfer(
     transfer_id: str,
