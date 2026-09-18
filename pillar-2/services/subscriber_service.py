@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime
 from algosdk.v2client import indexer
 from algosdk.encoding import checksum
-
+from sqlalchemy.exc import IntegrityError
 from algosdk.encoding import encode_address
 
 # Wired directly to the compliant PostgreSQL database.py
@@ -227,8 +227,6 @@ class SubscriberDaemon:
         elif event_name == "DeviceRecycled":
             metadata["recycler"] = decoded[1]
 
-        logger.info(f"Mirrored {event_name} for device {device_id} to DB.")
-
         db = SessionLocal()
         try:
             # Idempotency check: Don't insert the same tx_hash twice
@@ -247,9 +245,18 @@ class SubscriberDaemon:
                 )
                 db.add(new_event)
                 db.commit()
-        except Exception as e:
+                logger.info(f"Successfully mirrored {event_name} for device {device_id} to DB.")
+                
+        except IntegrityError:
+            # GRACEFUL FIX: Catch the Foreign Key error, rollback, and skip quietly.
             db.rollback()
-            logger.error(f"DB Error: {e}")
+            logger.warning(f"Skipped {event_name} for {device_id}: Device not found in local DB.")
+            
+        except Exception as e:
+            # Catch anything else without crashing the daemon
+            db.rollback()
+            logger.error(f"Unexpected DB Error while mirroring {device_id}: {e}")
+            
         finally:
             db.close()
 
