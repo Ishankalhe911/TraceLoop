@@ -141,6 +141,8 @@ class User(Base):
     
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    reward_points = Column(Integer, default=0)   # Running total — shown in dashboard badge
+    dispute_count = Column(Integer, default=0)   # Disputed stamps — verifier oversight
 
 class KYCDocument(Base):
     __tablename__ = "kyc_documents"

@@ -278,8 +278,34 @@ def get_my_profile(current_user: User = Depends(get_current_user_any_status)): #
         "role": current_user.role,
         "status": current_user.status,
         "admin_approved": current_user.admin_approved,
-        "aadhaar_verified": current_user.aadhaar_verified
+        "aadhaar_verified": current_user.aadhaar_verified,
+        # NEW: Expose gamification metrics to the frontend
+        "reward_points": current_user.reward_points,
+        "dispute_count": current_user.dispute_count
     })
+
+@router.delete("/me", status_code=status.HTTP_200_OK)
+def delete_my_account(
+    db: Session = Depends(get_db), 
+    current_user: User = Depends(get_current_user_any_status)
+):
+    """
+    DPDP Act Section 12(3) Compliance: Right to Erasure.
+    Deletes the user's PII from the off-chain Postgres database, 
+    orphaning their on-chain device history into anonymous ghost records.
+    """
+    try:
+        db.delete(current_user)
+        db.commit()
+        return standard_response({
+            "message": "Account and personal data successfully deleted in compliance with DPDP Act. On-chain history is now fully anonymized."
+        })
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+            detail=f"Account deletion failed: {str(e)}"
+        )
 
 
 @router.get("/kyc/my-documents")
