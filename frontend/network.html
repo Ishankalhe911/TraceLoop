@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Verified Network · Trace-Loop</title>
+<link rel="stylesheet" href="css/style.css">
+<style>
+  .network-hero {
+    background: var(--forest);
+    color: var(--white);
+    padding: 56px 0 40px;
+    margin-bottom: 40px;
+  }
+  .network-hero h1 { color: var(--white); font-size: clamp(1.8rem,4vw,2.8rem); }
+  .network-hero p  { color: rgba(255,255,255,.65); max-width: 54ch; margin-top: 10px; font-size: 1rem; }
+
+  .network-tabs {
+    display: flex; gap: 8px; margin-bottom: 32px; border-bottom: 2px solid var(--border); padding-bottom: 0;
+  }
+  .tab-btn {
+    background: none; border: none; cursor: pointer;
+    font-family: 'Space Grotesk', sans-serif; font-size: .95rem; font-weight: 600;
+    color: var(--muted); padding: 10px 20px 12px;
+    border-bottom: 3px solid transparent; margin-bottom: -2px;
+    transition: color .15s, border-color .15s;
+  }
+  .tab-btn.active { color: var(--green); border-bottom-color: var(--green); }
+
+  .network-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 20px;
+  }
+
+  .network-card {
+    background: var(--white);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 24px;
+    box-shadow: var(--shadow);
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .network-card-head {
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+  }
+  .network-badge {
+    width: 44px; height: 44px; border-radius: 10px;
+    background: var(--green-bg); color: var(--green);
+    display: grid; place-items: center;
+    font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 1rem;
+    flex-shrink: 0;
+  }
+  .network-badge.recycler { background: var(--blue-bg); color: var(--blue); }
+
+  .network-card h3 { font-size: 1rem; margin: 0; }
+  .network-card .location { font-size: .82rem; color: var(--muted); margin-top: 2px; }
+
+  .network-meta {
+    display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px;
+  }
+  .meta-tag {
+    font-size: .75rem; background: var(--grey-bg); color: var(--grey);
+    padding: 3px 8px; border-radius: 20px; font-weight: 500;
+  }
+  .meta-tag.brand { background: var(--green-bg); color: var(--green-dim); }
+  .meta-tag.cpcb  { background: var(--blue-bg);  color: var(--blue); }
+
+  .status-dot {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: .78rem; font-weight: 600; color: var(--green);
+  }
+  .status-dot::before {
+    content: ''; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--green); display: inline-block;
+    box-shadow: 0 0 0 2px var(--green-bg);
+  }
+
+  .verifier-id {
+    font-family: 'Space Mono', monospace; font-size: .75rem;
+    color: var(--muted); background: var(--grey-bg);
+    padding: 4px 8px; border-radius: 6px; display: inline-block;
+  }
+
+  .info-banner {
+    background: var(--amber-bg); border: 1px solid var(--amber);
+    border-radius: var(--radius); padding: 14px 18px;
+    font-size: .875rem; color: #92400e; margin-bottom: 28px;
+    display: flex; gap: 12px; align-items: flex-start;
+  }
+  .info-banner strong { display: block; margin-bottom: 4px; }
+
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+</style>
+</head>
+<body data-page="network">
+
+<nav class="site-nav"></nav>
+
+<div class="network-hero">
+  <div class="container">
+    <span class="eyebrow" style="color:var(--green);font-size:.78rem;letter-spacing:.1em;text-transform:uppercase;font-weight:600">Verified by Trace-Loop</span>
+    <h1>The Verified Network</h1>
+    <p>Every service center and recycler on this page has been manually onboarded by the Trace-Loop team. Their stamps are cryptographically tied to their authorized Algorand address — every audit is permanently on-chain.</p>
+  </div>
+</div>
+
+<div class="container" style="padding-bottom: 60px;">
+
+  <div class="info-banner">
+    <span style="font-size:1.2rem">📍</span>
+    <div>
+      <strong>How verification works</strong>
+      Bring your device physically to any authorized service center below. The engineer inspects it against the manufacturer database and issues an on-chain stamp. No remote verification is accepted — the physical audit is the trust guarantee.
+    </div>
+  </div>
+
+  <div class="network-tabs">
+    <button class="tab-btn active" data-tab="verifiers">🔧 Authorized Service Centers</button>
+    <button class="tab-btn" data-tab="recyclers">♻️ CPCB Recyclers</button>
+  </div>
+
+  <!-- VERIFIERS TAB -->
+  <div class="tab-panel active" id="tab-verifiers">
+    <div class="network-grid">
+
+      <div class="network-card">
+        <div class="network-card-head">
+          <div class="network-badge">DL</div>
+          <span class="status-dot">Active</span>
+        </div>
+        <div>
+          <h3>Dell Exclusive Service Centre</h3>
+          <p class="location">📍 Koregaon Park, Pune — Maharashtra</p>
+        </div>
+        <div class="network-meta">
+          <span class="meta-tag brand">Dell</span>
+          <span class="meta-tag brand">HP</span>
+          <span class="meta-tag">Walk-in accepted</span>
+          <span class="meta-tag">Mon–Sat, 10am–7pm</span>
+        </div>
+        <span class="verifier-id">VERIFIABLE-001 · Onboarded Sept 2026</span>
+      </div>
+
+      <div class="network-card">
+        <div class="network-card-head">
+          <div class="network-badge">HP</div>
+          <span class="status-dot">Active</span>
+        </div>
+        <div>
+          <h3>HP Authorized Care Centre</h3>
+          <p class="location">📍 Baner Road, Pune — Maharashtra</p>
+        </div>
+        <div class="network-meta">
+          <span class="meta-tag brand">HP</span>
+          <span class="meta-tag brand">Asus</span>
+          <span class="meta-tag">Appointment preferred</span>
+          <span class="meta-tag">Mon–Fri, 9am–6pm</span>
+        </div>
+        <span class="verifier-id">VERIFIABLE-002 · Onboarded Sept 2026</span>
+      </div>
+
+      <div class="network-card">
+        <div class="network-card-head">
+          <div class="network-badge">LN</div>
+          <span class="status-dot">Active</span>
+        </div>
+        <div>
+          <h3>Lenovo Exclusive Store</h3>
+          <p class="location">📍 FC Road, Pune — Maharashtra</p>
+        </div>
+        <div class="network-meta">
+          <span class="meta-tag brand">Lenovo</span>
+          <span class="meta-tag brand">MSI</span>
+          <span class="meta-tag brand">Samsung</span>
+          <span class="meta-tag">Walk-in accepted</span>
+          <span class="meta-tag">Tue–Sun, 11am–8pm</span>
+        </div>
+        <span class="verifier-id">VERIFIABLE-003 · Onboarded Sept 2026</span>
+      </div>
+
+    </div>
+
+    <div class="notice info" style="margin-top: 28px; font-size: .875rem;">
+      <strong>V1 Pilot Network — Pune</strong><br>
+      Trace-Loop launches with authorized partners in Pune. City expansion follows manufacturer partnerships. Any brand-authorized service center can apply for onboarding — contact the team for in-person verification.
+    </div>
+  </div>
+
+  <!-- RECYCLERS TAB -->
+  <div class="tab-panel" id="tab-recyclers">
+    <div class="network-grid">
+
+      <div class="network-card">
+        <div class="network-card-head">
+          <div class="network-badge recycler">EP</div>
+          <span class="status-dot">Active</span>
+        </div>
+        <div>
+          <h3>E-Parisaraa Pvt. Ltd.</h3>
+          <p class="location">📍 Pune Collection Point — Maharashtra</p>
+        </div>
+        <div class="network-meta">
+          <span class="meta-tag cpcb">CPCB Registered</span>
+          <span class="meta-tag">Maharashtra Coverage</span>
+          <span class="meta-tag">Laptops · Tablets · Phones</span>
+        </div>
+        <span class="verifier-id">CPCB-MH-2024-001 · Recycler-001</span>
+      </div>
+
+      <div class="network-card">
+        <div class="network-card-head">
+          <div class="network-badge recycler">AT</div>
+          <span class="status-dot">Active</span>
+        </div>
+        <div>
+          <h3>Attero Recycling</h3>
+          <p class="location">📍 Pune Drop Point — Maharashtra</p>
+        </div>
+        <div class="network-meta">
+          <span class="meta-tag cpcb">CPCB Registered</span>
+          <span class="meta-tag">Pan-India Coverage</span>
+          <span class="meta-tag">All Electronics</span>
+        </div>
+        <span class="verifier-id">CPCB-MH-2023-047 · Recycler-002</span>
+      </div>
+
+    </div>
+
+    <div class="notice info" style="margin-top: 28px; font-size: .875rem;">
+      <strong>CPCB Compliance</strong><br>
+      All recyclers are verified against the Central Pollution Control Board registration database at onboarding. Non-CPCB recyclers are blocked at the protocol level — the smart contract enforces this, not just policy.
+    </div>
+  </div>
+
+</div>
+
+<footer class="site-footer">
+  <div class="container">
+    <div class="footer-inner">
+      <span>Trace-Loop · IEEE YESIST12 2026</span>
+      <a href="track.html">Track a device</a>
+    </div>
+  </div>
+</footer>
+
+<script src="js/script.js"></script>
+<script>
+  // Tab switching
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,4 +1,3 @@
-
 const API_BASE = localStorage.getItem('traceloop_api_base') || 'https://trace-loop.onrender.com';
 const TOKEN_KEY   = 'traceloop_access_token';
 const REFRESH_KEY = 'traceloop_refresh_token';
@@ -141,6 +140,7 @@ function renderShell() {
     ['dashboard.html', 'Workspace', 'dashboard'],
     ['track.html',     'Track',     'track'],
     ['transfer.html',  'Marketplace','transfer'],
+    ['network.html',   'Network',    'network'],
   ];
   if (!logged) links.push(['register.html', 'Get started', 'register']);
 
@@ -202,6 +202,12 @@ async function initLogin() {
   const send   = $('#login-send-otp');
   const verify = $('#login-verify-otp');
 
+  // THE FIX: Prevent non-numbers and Auto-click Verify on the 6th digit
+  $('#login-otp-code')?.addEventListener('input', e => {
+    e.target.value = e.target.value.replace(/[^0-9]/g, '');
+    if (e.target.value.length === 6) verify.click();
+  });
+
   send?.addEventListener('click', async () => {
     const phone = $('#login-phone').value.trim();
     if (!phone) { toast('Enter your phone number.', 'error'); return; }
@@ -213,8 +219,11 @@ async function initLogin() {
       }));
       $('#login-otp-phone').textContent = phone;
       $('#login-otp-panel').hidden = false;
-      $('#login-otp-preview').textContent = d.otp_preview
-        ? `Dev OTP: ${d.otp_preview}` : 'OTP sent to your phone.';
+      
+      // THE FIX: The Magic Trick
+      $('#login-otp-preview').textContent = 'OTP sent to your phone.';
+      if (d.otp_preview) console.log("%c🔑 DEV OTP: " + d.otp_preview, "color: #25D366; font-size: 16px; font-weight: bold;");
+      
       $('#login-otp-code').focus();
       toast('OTP sent.');
     } catch (x) { toast(x.message, 'error'); }
@@ -368,6 +377,11 @@ function initRegister() {
     } catch (x) { toast(x.message, 'error'); }
     finally { setBusy(e.submitter, false); }
   });
+  // THE FIX: Auto-click Verify on the 6th digit for Registration too
+  $('#otp-input')?.addEventListener('input', e => {
+    e.target.value = e.target.value.replace(/[^0-9]/g, '');
+    if (e.target.value.length === 6) $('#btn-verify-otp')?.click();
+  });
 
   // ── Step 2 → send OTP ───────────────────────────────────────
   $('#btn-send-otp')?.addEventListener('click', async e => {
@@ -379,7 +393,11 @@ function initRegister() {
       }));
       const box = $('#otp-preview-box');
       box.style.display = 'block';
-      box.textContent = d.otp_preview ? `Dev mode OTP: ${d.otp_preview}` : 'OTP sent to your phone.';
+      
+      // THE FIX: The Magic Trick
+      box.textContent = 'OTP sent to your phone.';
+      if (d.otp_preview) console.log("%c🔑 DEV OTP: " + d.otp_preview, "color: #25D366; font-size: 16px; font-weight: bold;");
+      
       $('#otp-input').focus();
       $('#btn-verify-otp').disabled = false;
       toast('OTP sent.');
@@ -417,14 +435,23 @@ function initRegister() {
   fileInput?.addEventListener('change', () => {
     const f = fileInput.files[0];
     if (!f) return;
+    
     dropzone.classList.add('has-file');
     $('#dz-filename').textContent = `${f.name} (${(f.size / 1024).toFixed(1)} KB)`;
-    submitBtn.disabled = false;
-    // Compute and preview hash immediately
+    
+    // THE FIX: Lock the button and show the user that cryptography is happening
+    const btnToLock = typeof submitBtn !== 'undefined' ? submitBtn : submitKycBtn;
+    btnToLock.disabled = true; 
+    
+    const preview = $('#hash-preview');
+    if (preview) {
+      preview.style.display = 'block';
+      $('#hash-value').innerHTML = '<span style="color:var(--amber)">Computing SHA-256... ⏳</span>';
+    }
+
     hashFile(f).then(h => {
-      const preview = $('#hash-preview');
-      $('#hash-value').textContent = h;
-      if (preview) preview.style.display = 'block';
+      $('#hash-value').innerHTML = `<span style="color:var(--green)">🔒 ${h}</span>`;
+      btnToLock.disabled = false;
     });
   });
 
@@ -519,7 +546,15 @@ async function loadDashboard() {
   $('#account-status').innerHTML = chip(me.status);
   $('#user-id').textContent      = me.user_id || '—';
 
-  const actions = $('#dash-actions');
+  // REWARD POINTS
+  if (me.reward_points !== undefined) {
+    const pts = document.createElement('div');
+    pts.style.cssText = 'margin-top:10px;display:flex;align-items:center;gap:8px;';
+    pts.innerHTML = `<span style="background:var(--amber-bg);color:#92400e;border:1px solid var(--amber);border-radius:20px;padding:4px 14px;font-size:.82rem;font-weight:600;font-family:'Space Grotesk',sans-serif;">🌱 ${me.reward_points || 0} Eco Points</span><span class="muted" style="font-size:.75rem">Earned on successful device recycling</span>`;
+    $('#account-status').parentNode.appendChild(pts);
+  }
+
+ const actions = $('#dash-actions');
   if (actions) {
     const btns = [];
     if (['FIRST_BUYER', 'BUYER', 'RESELLER'].includes(me.role))
@@ -528,192 +563,234 @@ async function loadDashboard() {
       btns.push(`<a class="button primary" href="recycling.html">Recycling desk</a>`);
     if (['FIRST_BUYER', 'BUYER', 'RESELLER'].includes(me.role))
       btns.push(`<a class="button ghost" href="transfer.html">Marketplace</a>`);
+      
+    // THE FIX: DPDP Act Delete Account Button
+    btns.push(`<button class="button danger ghost" id="dpdp-delete-btn" title="DPDP Act Section 12(3) Compliance">Delete Account</button>`);
+    
     actions.innerHTML = btns.join('');
+    
+    // Wire up the delete action
+    $('#dpdp-delete-btn')?.addEventListener('click', async (e) => {
+      if (!confirm("⚠️ DPDP Right to Erasure: Are you sure you want to permanently delete your personal data? Your on-chain history will be anonymized into a Cryptographic Ghost.")) return;
+      
+      setBusy(e.target, true, 'Deleting data...');
+      try {
+        await api('/api/v1/me', { method: 'DELETE' });
+        toast('Personal data erased. Complying with DPDP Act.');
+        setTimeout(() => logout(true), 1500);
+      } catch (err) {
+        toast(err.message, 'error');
+        setBusy(e.target, false);
+      }
+    });
   }
-
   const root = $('#dashboard-content');
   const role = me.role;
   let html = '';
 
-  if (['FIRST_BUYER', 'BUYER', 'RESELLER'].includes(role)) {
-    html += `
-      <div class="panel">
-        <div class="panel-head">
-          <div><span class="eyebrow">Owned passports</span><h2>My devices</h2></div>
-          ${role === 'FIRST_BUYER' ? '<a class="button primary small" href="register-device.html">Register device</a>' : ''}
-        </div>
-        <div id="my-devices" class="card-grid"><div class="loading">Loading devices…</div></div>
+  // THE FIX: Wrapped the entire normal dashboard in an `else` block
+  if (me.status !== 'ACTIVE' && role !== 'ADMIN') {
+    html = `
+      <div class="panel" style="text-align:center; padding: 60px 20px;">
+        <div style="font-size:3rem; margin-bottom:16px;">⏳</div>
+        <h2>Account Under Review</h2>
+        <p class="muted" style="max-width:400px; margin:12px auto; line-height:1.6;">
+          Your account status is currently <strong>${esc(me.status)}</strong>. 
+          Our admin team is reviewing your documentation. The marketplace and registry features will unlock automatically once you are verified.
+        </p>
+        <button class="button ghost" onclick="location.reload()" style="margin-top:20px;">Refresh Status</button>
       </div>
-
-      <div class="panel">
-        <div class="panel-head">
-          <div><span class="eyebrow">Handoffs</span><h2>Incoming transfers</h2></div>
-          <button class="button ghost small" id="refresh-incoming">Refresh</button>
+    `;
+  } else {
+    // ---- START OF NORMAL DASHBOARD (Only executes if ACTIVE or ADMIN) ----
+    if (['FIRST_BUYER', 'BUYER', 'RESELLER'].includes(role)) {
+      html += `
+        <div class="panel">
+          <div class="panel-head">
+            <div><span class="eyebrow">Owned passports</span><h2>My devices</h2></div>
+            ${role === 'FIRST_BUYER' ? '<a class="button primary small" href="register-device.html">Register device</a>' : ''}
+          </div>
+          <div id="my-devices" class="card-grid"><div class="loading">Loading devices…</div></div>
         </div>
-        <div id="incoming" class="stack"><div class="loading">Loading…</div></div>
-      </div>
 
-      <div class="panel">
-        <div class="panel-head">
-          <div><span class="eyebrow">Disputes</span><h2>My disputes</h2></div>
-          <button class="button ghost small" id="open-raise-dispute">Raise dispute</button>
+        <div class="panel">
+          <div class="panel-head">
+            <div><span class="eyebrow">Handoffs</span><h2>Incoming transfers</h2></div>
+            <button class="button ghost small" id="refresh-incoming">Refresh</button>
+          </div>
+          <div id="incoming" class="stack"><div class="loading">Loading…</div></div>
         </div>
-        <div id="my-disputes" class="stack"><div class="loading">Loading…</div></div>
-      </div>
 
-      <!-- Raise dispute modal -->
-      <div id="dispute-modal" style="display:none;position:fixed;inset:0;background:rgba(13,31,23,.7);z-index:500;place-items:center">
-        <div class="card" style="max-width:480px;width:90%;margin:auto" onclick="event.stopPropagation()">
-          <h3 style="margin-bottom:16px">Raise a dispute</h3>
-          <form id="dispute-form" class="form-grid">
-            <label>Device ID <span class="req">*</span>
+        <div class="panel">
+          <div class="panel-head">
+            <div><span class="eyebrow">Disputes</span><h2>My disputes</h2></div>
+            <button class="button ghost small" id="open-raise-dispute">Raise dispute</button>
+          </div>
+          <div id="my-disputes" class="stack"><div class="loading">Loading…</div></div>
+        </div>
+
+        <!-- Raise dispute modal -->
+        <div id="dispute-modal" style="display:none;position:fixed;inset:0;background:rgba(13,31,23,.7);z-index:500;place-items:center">
+          <div class="card" style="max-width:480px;width:90%;margin:auto" onclick="event.stopPropagation()">
+            <h3 style="margin-bottom:16px">Raise a dispute</h3>
+            <form id="dispute-form" class="form-grid">
+              <label>Device ID <span class="req">*</span>
               <input name="device_id" required placeholder="TL-BRAND-SERIAL"
-                style="font-family:'Space Mono',monospace" oninput="this.value=this.value.toUpperCase()">
-            </label>
-            <label>Dispute type <span class="req">*</span>
-              <select name="dispute_type" required>
-                <option value="">Select type</option>
-                <option value="MISREPRESENTED_SPEC">Misrepresented specification</option>
-                <option value="STOLEN">Stolen device</option>
-                <option value="FAKE_STAMP">Fake verification stamp</option>
-                <option value="OWNERSHIP_DISPUTE">Ownership dispute</option>
-                <option value="OTHER">Other</option>
-              </select>
-            </label>
-            <label>Description <span class="req">*</span>
-              <textarea name="description" required minlength="10" placeholder="Describe the issue in detail…"></textarea>
-            </label>
-            <div style="display:flex;gap:10px;justify-content:flex-end">
-              <button class="button ghost" type="button" id="close-dispute-modal">Cancel</button>
-              <button class="button danger" type="submit">Submit dispute</button>
-            </div>
-          </form>
-        </div>
-      </div>
-
-      <!-- List device modal (DPDPA Consent) -->
-      <div id="list-modal" style="display:none;position:fixed;inset:0;background:rgba(13,31,23,.7);z-index:500;place-items:center">
-        <div class="card" style="max-width:480px;width:90%;margin:auto" onclick="event.stopPropagation()">
-          <h3 style="margin-bottom:16px">List on Marketplace</h3>
-          <form id="list-form" class="form-grid">
-            <input type="hidden" id="list-device-id" name="device_id">
-            <label>Asking price (₹) <span class="muted" style="font-weight:400">(Optional)</span>
-              <input name="asking_price" type="number" min="0" placeholder="e.g. 50000">
-            </label>
-            <label>City <span class="muted" style="font-weight:400">(Optional)</span>
-              <input name="city" placeholder="e.g. Pune">
-            </label>
-            <div class="notice warning" style="margin-top:4px">
-              <label style="display:flex;align-items:flex-start;gap:10px;margin-bottom:0;cursor:pointer;">
-                <input type="checkbox" required name="dpdpa_consent"
-                  style="width:18px;height:18px;margin-top:2px;cursor:pointer;flex-shrink:0">
-                <span style="font-weight:500;font-size:.85rem;line-height:1.4">
-                  <strong>DPDPA Consent:</strong> I agree to share my registered phone number
-                  via WhatsApp with interested buyers on the public marketplace.
-                </span>
+               style="font-family:'Space Mono',monospace" 
+               oninput="this.value = this.value.toUpperCase().replace(/[^A-Z0-9-]/g, '')">
               </label>
-            </div>
-            <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px">
-              <button class="button ghost" type="button" id="close-list-modal">Cancel</button>
-              <button class="button primary" type="submit">List device</button>
-            </div>
-          </form>
+              <label>Dispute type <span class="req">*</span>
+                <select name="dispute_type" required>
+                  <option value="">Select type</option>
+                  <option value="MISREPRESENTED_SPEC">Misrepresented specification</option>
+                  <option value="STOLEN">Stolen device</option>
+                  <option value="FAKE_STAMP">Fake verification stamp</option>
+                  <option value="OWNERSHIP_DISPUTE">Ownership dispute</option>
+                  <option value="OTHER">Other</option>
+                </select>
+              </label>
+              <label>Description <span class="req">*</span>
+                <textarea name="description" required minlength="10" placeholder="Describe the issue in detail…"></textarea>
+              </label>
+              <div style="display:flex;gap:10px;justify-content:flex-end">
+                <button class="button ghost" type="button" id="close-dispute-modal">Cancel</button>
+                <button class="button danger" type="submit">Submit dispute</button>
+              </div>
+            </form>
+          </div>
         </div>
-      </div>
-    `;
-  }
 
-  if (role === 'VERIFIABLE') {
-    html += `
-      <div class="panel">
-        <div class="panel-head">
-          <div><span class="eyebrow">Service centre queue</span><h2>Transfers to complete</h2></div>
-          <button class="button ghost small" id="refresh-pending">Refresh</button>
+        <!-- List device modal (DPDPA Consent) -->
+        <div id="list-modal" style="display:none;position:fixed;inset:0;background:rgba(13,31,23,.7);z-index:500;place-items:center">
+          <div class="card" style="max-width:480px;width:90%;margin:auto" onclick="event.stopPropagation()">
+            <h3 style="margin-bottom:16px">List on Marketplace</h3>
+            <form id="list-form" class="form-grid">
+              <input type="hidden" id="list-device-id" name="device_id">
+              <label>Asking price (₹) <span class="muted" style="font-weight:400">(Optional)</span>
+                <input name="asking_price" type="number" min="0" placeholder="e.g. 50000">
+              </label>
+              <label>City <span class="muted" style="font-weight:400">(Optional)</span>
+                <input name="city" placeholder="e.g. Pune">
+              </label>
+              <div class="notice warning" style="margin-top:4px">
+                <label style="display:flex;align-items:flex-start;gap:10px;margin-bottom:0;cursor:pointer;">
+                  <input type="checkbox" required name="dpdpa_consent"
+                    style="width:18px;height:18px;margin-top:2px;cursor:pointer;flex-shrink:0">
+                  <span style="font-weight:500;font-size:.85rem;line-height:1.4">
+                    <strong>DPDPA Consent:</strong> I agree to share my registered phone number
+                    via WhatsApp with interested buyers on the public marketplace.
+                  </span>
+                </label>
+              </div>
+              <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px">
+                <button class="button ghost" type="button" id="close-list-modal">Cancel</button>
+                <button class="button primary" type="submit">List device</button>
+              </div>
+            </form>
+          </div>
         </div>
-        <div id="pending-completion" class="stack"><div class="loading">Loading…</div></div>
-      </div>
+      `;
+    }
 
-      <div class="panel">
-        <div class="panel-head">
-          <div><span class="eyebrow">Physical audit</span><h2>Issue a verification stamp</h2></div>
+    if (role === 'VERIFIABLE') {
+      html += `
+        <div class="panel">
+          <div class="panel-head">
+            <div><span class="eyebrow">Service centre queue</span><h2>Transfers to complete</h2></div>
+            <button class="button ghost small" id="refresh-pending">Refresh</button>
+          </div>
+          <div id="pending-completion" class="stack"><div class="loading">Loading…</div></div>
         </div>
-        <div class="panel-body">
-          <p class="muted" style="margin-bottom:20px">
-            After physically inspecting the device, issue the on-chain stamp. This writes to Algorand.
-          </p>
-          <form id="stamp-form" class="form-grid" style="max-width:480px">
-            <label>Device ID <span class="req">*</span>
+
+        <div class="panel">
+          <div class="panel-head">
+            <div><span class="eyebrow">Physical audit</span><h2>Issue a verification stamp</h2></div>
+          </div>
+          <div class="panel-body">
+            <p class="muted" style="margin-bottom:20px">
+              After physically inspecting the device, issue the on-chain stamp. This writes to Algorand.
+            </p>
+            <form id="stamp-form" class="form-grid" style="max-width:480px">
+              <label>Device ID <span class="req">*</span>
               <input name="device_id" required placeholder="TL-BRAND-SERIAL"
-                style="font-family:'Space Mono',monospace" oninput="this.value=this.value.toUpperCase()">
-            </label>
-            <button class="button primary" type="submit">Issue stamp on-chain</button>
-          </form>
-          <div id="stamp-result" style="margin-top:14px"></div>
+              style="font-family:'Space Mono',monospace" 
+               oninput="this.value = this.value.toUpperCase().replace(/[^A-Z0-9-]/g, '')">
+              </label>
+              <button class="button primary" type="submit">Issue stamp on-chain</button>
+            </form>
+            <div id="stamp-result" style="margin-top:14px"></div>
+          </div>
         </div>
-      </div>
-    `;
-  }
+      `;
+    }
 
-  if (role === 'RECYCLER') {
-    html += `
-      <div class="panel">
-        <div class="panel-head">
-          <div><span class="eyebrow">Facility inbox</span><h2>Incoming transfers</h2></div>
-          <a class="button primary small" href="recycling.html">Recycling desk</a>
+    if (role === 'RECYCLER') {
+      html += `
+        <div class="panel">
+          <div class="panel-head">
+            <div><span class="eyebrow">Facility inbox</span><h2>Incoming transfers</h2></div>
+            <a class="button primary small" href="recycling.html">Recycling desk</a>
+          </div>
+          <div id="incoming" class="stack"><div class="loading">Loading…</div></div>
         </div>
-        <div id="incoming" class="stack"><div class="loading">Loading…</div></div>
-      </div>
-    `;
-  }
+      `;
+    }
 
-  if (role === 'ADMIN') {
-    html += `
-      <div class="panel">
-        <div class="panel-head">
-          <div><span class="eyebrow">Admin console</span><h2>Operations overview</h2></div>
+    if (role === 'ADMIN') {
+      html += `
+        <div class="panel">
+          <div class="panel-head">
+            <div><span class="eyebrow">Admin console</span><h2>Operations overview</h2></div>
+          </div>
+          <div class="admin-grid">
+            <div class="admin-card" onclick="location.href='#disputes'">
+              <span class="eyebrow">Open disputes</span>
+              <span class="metric" id="cnt-disputes">—</span>
+              <p class="muted">Disputes pending review</p>
+            </div>
+            <div class="admin-card" onclick="location.href='#kyc'">
+              <span class="eyebrow">KYC queue</span>
+              <span class="metric" id="cnt-kyc">—</span>
+              <p class="muted">Documents awaiting review</p>
+            </div>
+            <div class="admin-card" onclick="location.href='#approvals'">
+              <span class="eyebrow">Pending approvals</span>
+              <span class="metric" id="cnt-approvals">—</span>
+              <p class="muted">VERIFIABLE / RECYCLER accounts</p>
+            </div>
+            <div class="admin-card" onclick="location.href='#devices'">
+              <span class="eyebrow">Device registry</span>
+              <span class="metric" id="cnt-devices">—</span>
+              <p class="muted">Total devices on-chain</p>
+            </div>
+          </div>
         </div>
-        <div class="admin-grid">
-          <div class="admin-card" onclick="location.href='#disputes'">
-            <span class="eyebrow">Open disputes</span>
-            <span class="metric" id="cnt-disputes">—</span>
-            <p class="muted">Disputes pending review</p>
-          </div>
-          <div class="admin-card" onclick="location.href='#kyc'">
-            <span class="eyebrow">KYC queue</span>
-            <span class="metric" id="cnt-kyc">—</span>
-            <p class="muted">Documents awaiting review</p>
-          </div>
-          <div class="admin-card" onclick="location.href='#approvals'">
-            <span class="eyebrow">Pending approvals</span>
-            <span class="metric" id="cnt-approvals">—</span>
-            <p class="muted">VERIFIABLE / RECYCLER accounts</p>
-          </div>
-          <div class="admin-card" onclick="location.href='#devices'">
-            <span class="eyebrow">Device registry</span>
-            <span class="metric" id="cnt-devices">—</span>
-            <p class="muted">Total devices on-chain</p>
-          </div>
-        </div>
-      </div>
 
-      <div class="panel" id="disputes">
-        <div class="panel-head"><div><span class="eyebrow">Open disputes</span><h2>Dispute queue</h2></div></div>
-        <div id="disputes-list" class="stack"><div class="loading">Loading…</div></div>
-      </div>
-      <div class="panel" id="approvals">
-        <div class="panel-head"><div><span class="eyebrow">Pending approvals</span><h2>VERIFIABLE &amp; RECYCLER accounts</h2></div></div>
-        <div id="approvals-list" class="stack"><div class="loading">Loading…</div></div>
-      </div>
-      <div class="panel" id="kyc">
-        <div class="panel-head"><div><span class="eyebrow">KYC documents</span><h2>Pending review</h2></div></div>
-        <div id="kyc-list" class="stack"><div class="loading">Loading…</div></div>
-      </div>
-      <div class="panel" id="devices">
-        <div class="panel-head"><div><span class="eyebrow">Device registry</span><h2>All devices</h2></div></div>
-        <div id="devices-list" class="stack"><div class="loading">Loading…</div></div>
-      </div>
-    `;
-  }
+        <div class="panel" id="disputes">
+          <div class="panel-head"><div><span class="eyebrow">Open disputes</span><h2>Dispute queue</h2></div></div>
+          <div id="disputes-list" class="stack"><div class="loading">Loading…</div></div>
+        </div>
+        <div class="panel" id="approvals">
+          <div class="panel-head"><div><span class="eyebrow">Pending approvals</span><h2>VERIFIABLE &amp; RECYCLER accounts</h2></div></div>
+          <div id="approvals-list" class="stack"><div class="loading">Loading…</div></div>
+        </div>
+        <div class="panel" id="kyc">
+          <div class="panel-head"><div><span class="eyebrow">KYC documents</span><h2>Pending review</h2></div></div>
+          <div id="kyc-list" class="stack"><div class="loading">Loading…</div></div>
+        </div>
+        <div class="panel" id="devices">
+          <div class="panel-head"><div><span class="eyebrow">Device registry</span><h2>All devices</h2></div></div>
+          <div id="devices-list" class="stack"><div class="loading">Loading…</div></div>
+        </div>
+
+        <div class="panel" id="verifiers">
+          <div class="panel-head"><div><span class="eyebrow">Verifier oversight</span><h2>Authorized service centers</h2></div></div>
+          <div id="verifiers-list" class="stack"><div class="loading">Loading…</div></div>
+        </div>
+      `;
+    }
+  } // <--- END OF ELSE BLOCK
+
 
   root.innerHTML = html || empty('No workspace', 'Your role does not have a configured dashboard.');
   loadUserNotifications();
@@ -761,8 +838,7 @@ async function loadMyDevices() {
             <a class="button ghost small" href="track.html?id=${encodeURIComponent(x.device_id)}">View passport</a>
             ${x.is_for_sale
               ? `<button class="button danger small" data-unlist="${esc(x.device_id)}">Unlist</button>`
-              // THE FIX: Disable the List button if the stamp is not valid
-              : `<button class="button secondary small" data-list="${esc(x.device_id)}" ${x.stamp_valid ? '' : 'disabled title="Device must be physically audited before listing for sale"'}>List for sale</button>`
+              : `<button class="button secondary small" data-list="${esc(x.device_id)}">List for sale</button>`
             }
             <button class="button ghost small" data-transfer="${esc(x.device_id)}">Transfer</button>
           </div>
@@ -770,13 +846,13 @@ async function loadMyDevices() {
       : empty('No devices yet', 'Register a laptop or receive a verified transfer.');
 
     $$('[data-list]',    el).forEach(b => b.addEventListener('click', () => openListModal(b.dataset.list)));
-    // THE FIX: Pass the button element to the functions so we can trigger the loading state
     $$('[data-unlist]',  el).forEach(b => b.addEventListener('click', () => unlistDevice(b.dataset.unlist, b)));
     $$('[data-transfer]',el).forEach(b => b.addEventListener('click', () => initiateTransfer(b.dataset.transfer, b)));
   } catch (e) {
     el.innerHTML = empty('Unable to load devices', e.message);
   }
 }
+
 // Opens the DPDPA consent modal
 function openListModal(id) {
   const modal = $('#list-modal');
@@ -828,10 +904,14 @@ async function unlistDevice(id, btn) {
   finally { setBusy(btn, false); }
 }
 
-// THE FIX: Add 'btn' parameter and setBusy block
 async function initiateTransfer(id, btn) {
-  const to = prompt(`Enter the receiver's Trace-Loop user ID to initiate transfer of ${id}:`);
+  let to = prompt(`Enter the receiver's Trace-Loop user ID to initiate transfer of ${id}:`);
   if (!to) return;
+  
+  // PREVENTIVE SANITIZATION: Clean the prompt input so backend doesn't crash on spaces
+  to = to.trim().replace(/[^A-Za-z0-9-]/g, '');
+  if (to.length < 5) { toast('Invalid User ID format.', 'error'); return; }
+
   setBusy(btn, true, 'Initiating…');
   try {
     const d = envelope(await api('/transfers/initiate', {
@@ -843,6 +923,7 @@ async function initiateTransfer(id, btn) {
   } catch (e) { toast(e.message, 'error'); }
   finally { setBusy(btn, false); }
 }
+
 /* ── Incoming transfers ──────────────────────────────────────── */
 async function loadIncoming() {
   const el = $('#incoming');
@@ -869,7 +950,6 @@ async function loadIncoming() {
         </article>`).join('')
       : empty('No incoming transfers', 'Accepted handoffs will appear here.');
 
-    // THE FIX: Pass the button to the action function
     $$('[data-accept]', el).forEach(b => b.addEventListener('click', () => transferAction(b.dataset.accept, 'accept', b)));
     $$('[data-cancel]', el).forEach(b => b.addEventListener('click', () => transferAction(b.dataset.cancel, 'cancel', b)));
   } catch (e) {
@@ -877,9 +957,8 @@ async function loadIncoming() {
   }
 }
 
-// THE FIX: Apply setBusy so users cannot click Accept twice
 async function transferAction(id, action, btn) {
-  setBusy(btn, true, 'Writing to chain…');
+  setBusy(btn, true, 'Processing…');
   try {
     await api(`/transfers/${id}/${action}`, { method: 'POST' });
     if (action === 'accept') {
@@ -984,8 +1063,7 @@ async function loadPendingCompletion() {
             <button class="button primary small" data-complete="${esc(x.transfer_id)}">Complete transfer</button>
           </div>
         </article>`).join('')
-      // THE FIX: Clean empty state for the Verifier
-      : empty('Queue is clear', 'No physical audits pending. Facility clear.');
+      : empty('Queue is clear', 'Transfers awaiting physical inspection appear here.');
 
     $$('[data-complete]', el).forEach(b => b.addEventListener('click', async () => {
       setBusy(b, true, 'Executing…');
@@ -1004,7 +1082,7 @@ async function loadPendingCompletion() {
 
 /* ── ADMIN ───────────────────────────────────────────────────── */
 async function loadAdminAll() {
-  await Promise.all([loadAdminDisputes(), loadAdminApprovals(), loadAdminKyc(), loadAdminDevices()]);
+  await Promise.all([loadAdminDisputes(), loadAdminApprovals(), loadAdminKyc(), loadAdminDevices(), loadAdminVerifiers()]);
 }
 
 async function loadAdminDisputes() {
@@ -1030,22 +1108,17 @@ async function loadAdminDisputes() {
           </div>
         </div>`).join('')
       : empty('No open disputes', 'All disputes resolved.');
-      
-    // EXACT PLACEMENT: It must go here, right after el.innerHTML creates the buttons!
-    $$('[data-resolve]', el).forEach(b => b.addEventListener('click', () => adminResolveDispute(b.dataset.resolve, b)));
-    
+    $$('[data-resolve]', el).forEach(b => b.addEventListener('click', () => adminResolveDispute(b.dataset.resolve)));
   } catch (e) { el.innerHTML = empty('Error', e.message); }
 }
 
-async function adminResolveDispute(id, btn) {
+async function adminResolveDispute(id) {
   const note  = prompt('Resolution note (required):');
   if (!note) return;
   const state = prompt('Resolve to state: REGISTERED / VERIFIED / TRANSFERRED', 'REGISTERED');
   if (!['REGISTERED', 'VERIFIED', 'TRANSFERRED'].includes(state?.toUpperCase())) {
     toast('Invalid state.', 'error'); return;
   }
-  
-  setBusy(btn, true, 'Resolving…');
   try {
     await api(`/disputes/${id}/resolve`, {
       method: 'PATCH',
@@ -1054,7 +1127,6 @@ async function adminResolveDispute(id, btn) {
     toast('Dispute resolved.');
     loadAdminDisputes();
   } catch (e) { toast(e.message, 'error'); }
-  finally { setBusy(btn, false); }
 }
 
 async function loadAdminApprovals() {
@@ -1062,6 +1134,9 @@ async function loadAdminApprovals() {
   if (!el) return;
   try {
     const d = envelope(await api('/admin/approvals/pending'));
+    
+    // ── BULLETPROOF ARRAY EXTRACTION ──
+    // This automatically finds the array regardless of what key the backend uses
     const list = d.approvals || d.users || d.data || d.items || (Array.isArray(d) ? d : Object.values(d).find(Array.isArray) || []);
     
     $('#cnt-approvals').textContent = list.length;
@@ -1080,15 +1155,14 @@ async function loadAdminApprovals() {
             <button class="button danger small"  data-reject="${esc(x.user_id || x.id)}">Reject</button>
           </div>
         </div>`).join('')
-      // THE FIX: Clean empty state
-      : empty('No pending approvals', 'Zero accounts awaiting manual review.');
+      : empty('No pending approvals', 'All accounts processed.');
       
-    // THE FIX: Passed 'b' to the function
     $$('[data-approve]', el).forEach(b => b.addEventListener('click', () => adminApprove(b.dataset.approve, 'approve', b)));
     $$('[data-reject]',  el).forEach(b => b.addEventListener('click', () => adminApprove(b.dataset.reject, 'reject', b)));
   } catch (e) { el.innerHTML = empty('Error', e.message); }
 }
 
+// Replace this function
 async function adminApprove(id, action, btn) {
   setBusy(btn, true, 'Working…');
   try {
@@ -1107,6 +1181,8 @@ async function loadAdminKyc() {
   if (!el) return;
   try {
     const d = envelope(await api('/admin/kyc/pending'));
+    
+    // Explicitly targets 'pending_documents' from your Python output
     const list = d.pending_documents || d.documents || (Array.isArray(d) ? d : Object.values(d).find(Array.isArray) || []);
     
     $('#cnt-kyc').textContent = list.length;
@@ -1126,16 +1202,15 @@ async function loadAdminKyc() {
             <button class="button danger small"  data-kyc-reject="${esc(x.doc_id || x.id)}">Reject</button>
           </div>
         </div>`).join('')
-      // THE FIX: Clean empty state
-      : empty('KYC queue is clear', 'Zero pending documents. All users verified.');
+      : empty('KYC queue is clear', 'No documents pending review.');
 
-    // THE FIX: Passed 'b' to the function
     $$('[data-kyc-approve]', el).forEach(b => b.addEventListener('click', () => adminKycReview(b.dataset.kycApprove, 'approve', b)));
     $$('[data-kyc-reject]',  el).forEach(b => b.addEventListener('click', () => adminKycReview(b.dataset.kycReject, 'reject', b)));
   } catch (e) { el.innerHTML = empty('Error', e.message); }
 }
 
 // Replace this function
+// THE FIX: Added 'btn' parameter
 async function adminKycReview(docId, action, btn) {
   const note = action === 'reject' ? prompt('Rejection reason (required):') : null;
   
@@ -1146,9 +1221,11 @@ async function adminKycReview(docId, action, btn) {
 
   const decisionVal = action === 'approve' ? 'ACCEPT' : 'REJECT';
   
+  // Build payload dynamically so we don't send nulls to strict Pydantic models
   const payload = { decision: decisionVal };
   if (note) payload.rejection_reason = note;
 
+  // THE FIX: Lock the button to prevent duplicate API clicks
   setBusy(btn, true, 'Processing…');
   try {
     await api(`/admin/kyc/${docId}/review`, {
@@ -1158,8 +1235,12 @@ async function adminKycReview(docId, action, btn) {
     
     toast(`Document successfully ${action}d.`);
     loadAdminKyc();
-  } catch (e) { toast(e.message, 'error'); }
-  finally { setBusy(btn, false); }
+  } catch (e) { 
+    toast(e.message, 'error'); 
+  } finally { 
+    // THE FIX: Always unlock the button, even if the API fails
+    setBusy(btn, false); 
+  }
 }
 
 async function loadAdminDevices() {
@@ -1186,18 +1267,13 @@ async function loadAdminDevices() {
           </div>
         </div>`).join('')
       : empty('No devices', 'No devices in the registry.');
-      
     $$('[data-export]', el).forEach(b => b.addEventListener('click', async () => {
       if (!confirm(`Mark ${b.dataset.export} as EXPORTED? This is terminal.`)) return;
-      
-      // THE FIX: Inline setBusy for the export button
-      setBusy(b, true, 'Exporting…');
       try {
         await api(`/admin/devices/${encodeURIComponent(b.dataset.export)}/export`, { method: 'POST' });
         toast('Device marked as EXPORTED.');
         loadAdminDevices();
       } catch (e) { toast(e.message, 'error'); }
-      finally { setBusy(b, false); }
     }));
   } catch (e) { el.innerHTML = empty('Error', e.message); }
 }
@@ -1212,7 +1288,13 @@ async function initTrack() {
 }
 
 async function searchDevice() {
-  const id = $('#device-id').value.trim().toUpperCase();
+  const inputEl = $('#device-id');
+  if (!inputEl) return;
+
+  // THE FIX: Instantly self-heal and sanitize the input field value
+  inputEl.value = inputEl.value.trim().toUpperCase().replace(/[^A-Z0-9-]/g, '');
+  const id = inputEl.value;
+
   if (!id) { toast('Enter a device ID.', 'error'); return; }
 
   const r = $('#track-result');
@@ -1323,11 +1405,7 @@ let allListings = [];
 async function initTransfer() {
   const g = $('#marketplace');
   try {
-    // Route logged-in users to /auth, and guests to the public endpoint
-      const path = token() ? '/transfers/marketplace/auth' : '/transfers/marketplace';
-      const options = token() ? {} : { auth: false };
-
-      const d = envelope(await api(path, options));
+    const d = envelope(await api('/transfers/marketplace', { auth: false }));
     allListings = d.listings || (Array.isArray(d) ? d : []);
     renderListings(allListings);
     $('#listing-count').textContent = `${allListings.length} verified listing${allListings.length !== 1 ? 's' : ''}`;
@@ -1567,14 +1645,23 @@ async function initRegisterDevice() {
   fileInput?.addEventListener('change', () => {
     const f = fileInput.files[0];
     if (!f) return;
+    
     dropzone.classList.add('has-file');
     $('#dz-filename').textContent = `${f.name} (${(f.size / 1024).toFixed(1)} KB)`;
-    submitKycBtn.disabled = false;
     
+    // THE FIX: Lock the button and show the user that cryptography is happening
+    const btnToLock = typeof submitBtn !== 'undefined' ? submitBtn : submitKycBtn;
+    btnToLock.disabled = true; 
+    
+    const preview = $('#hash-preview');
+    if (preview) {
+      preview.style.display = 'block';
+      $('#hash-value').innerHTML = '<span style="color:var(--amber)">Computing SHA-256... ⏳</span>';
+    }
+
     hashFile(f).then(h => {
-      const preview = $('#hash-preview');
-      $('#hash-value').textContent = h;
-      if (preview) preview.style.display = 'block';
+      $('#hash-value').innerHTML = `<span style="color:var(--green)">🔒 ${h}</span>`;
+      btnToLock.disabled = false;
     });
   });
 
@@ -1658,24 +1745,43 @@ async function initRecycling() {
     e.preventDefault();
     const id = new FormData(e.target).get('device_id')?.trim().toUpperCase();
     if (!confirm(`Permanently recycle ${id}? This writes a terminal state to Algorand and cannot be undone.`)) return;
+    
     setBusy(e.submitter, true, 'Writing to chain…');
+    
     try {
       const d = envelope(await api('/recycling/complete', {
         method: 'POST', body: JSON.stringify({ device_id: id })
       }));
+      
+      // --- THE CRITICAL FIX: Refresh local session so Eco Points update ---
+      try {
+        const freshMe = envelope(await api('/api/v1/me'));
+        localStorage.setItem('traceloop_user', JSON.stringify(freshMe));
+      } catch (err) {
+        console.error("Failed to refresh user session:", err);
+      }
+      // ------------------------------------------------------------------
+
       const tx = d.chain_tx_id || d.tx_id || '';
       $('#complete-result').innerHTML = `<div class="notice success">
-        Device recycled on-chain.
+        Device recycled on-chain. Earned eco points!
         ${tx ? `<a href="https://lora.algokit.io/testnet/transaction/${encodeURIComponent(tx)}" target="_blank">View on Lora ↗</a>` : ''}
         ${d.certificate_url ? `<br><a href="${esc(d.certificate_url)}" target="_blank">Download CPCB certificate ↗</a>` : ''}
       </div>`;
-      toast('Device recycled. Terminal state written to Algorand.');
+      
+      toast('Device recycled. Eco points credited.');
       e.target.reset();
       loadRecyclerIncoming();
+      
+      // Reload the page to display the freshly saved points from localStorage
+      setTimeout(() => location.reload(), 1500);
+
     } catch (x) {
       $('#complete-result').innerHTML = `<div class="notice error">${esc(x.message)}</div>`;
       toast(x.message, 'error');
-    } finally { setBusy(e.submitter, false); }
+    } finally { 
+      setBusy(e.submitter, false); 
+    }
   });
 
   $('#refresh-incoming')?.addEventListener('click', loadRecyclerIncoming);
@@ -1702,6 +1808,56 @@ async function loadRecyclerIncoming() {
   } catch (e) { el.innerHTML = empty('Error', e.message); }
 }
 
+
+/* ── ADMIN: Verifier oversight with dispute count ────────────── */
+async function loadAdminVerifiers() {
+  const el = $('#verifiers-list');
+  if (!el) return;
+  try {
+    const d = envelope(await api('/admin/verifiers'));
+    const list = d.verifiers || (Array.isArray(d) ? d : []);
+    el.innerHTML = list.length
+      ? list.map(x => {
+          const disputes = x.dispute_count || 0;
+          const flagged  = disputes > 1;
+          return `
+          <div class="transfer-row">
+            <div>
+              <strong>${esc(x.name || '—')}</strong>
+              <p class="muted" style="font-size:.82rem">${esc(x.phone || '—')} · ${esc(x.brand_auth_code || '—')}</p>
+              <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                <span style="font-size:.78rem;background:${flagged ? 'var(--red-bg)' : 'var(--green-bg)'};
+                  color:${flagged ? 'var(--red)' : 'var(--green)'};
+                  border-radius:20px;padding:2px 10px;font-weight:600;">
+                  ${disputes} disputed stamp${disputes !== 1 ? 's' : ''}
+                  ${flagged ? ' ⚠ AUTO-FLAGGED' : ''}
+                </span>
+                ${chip(x.status || 'ACTIVE')}
+              </div>
+            </div>
+            <div class="row-actions">
+              ${x.status === 'ACTIVE'
+                ? `<button class="button danger small" data-revoke="${esc(x.user_id || x.id)}">Revoke</button>`
+                : '<span class="muted" style="font-size:.82rem">Revoked</span>'
+              }
+            </div>
+          </div>`;
+        }).join('')
+      : empty('No verifiers', 'No authorized service centers onboarded yet.');
+
+    $$('[data-revoke]', el).forEach(b => b.addEventListener('click', async () => {
+      if (!confirm(`Revoke this verifier? They will lose stamp authority immediately.`)) return;
+      setBusy(b, true, 'Revoking…');
+      try {
+        await api(`/admin/verifiers/${b.dataset.revoke}/revoke`, { method: 'POST' });
+        toast('Verifier authorization revoked.');
+        loadAdminVerifiers();
+      } catch (e) { toast(e.message, 'error'); }
+      finally { setBusy(b, false); }
+    }));
+  } catch (e) { el.innerHTML = empty('Error loading verifiers', e.message); }
+}
+
 /* ═══════════════════════════════════════════════════════════════
    INIT ROUTER
 ══════════════════════════════════════════════════════════════ */
@@ -1721,70 +1877,150 @@ document.addEventListener('DOMContentLoaded', () => {
 window.logout       = logout;
 window.searchDevice = searchDevice;
 /* ── USER NOTIFICATIONS & ALERTS ─────────────────────────────── */
+/* ── USER NOTIFICATIONS & ALERTS ─────────────────────────────── */
 async function loadUserNotifications() {
   const root = $('#dashboard-content');
   if (!root) return;
 
   try {
-    const d = envelope(await api('/api/v1/kyc/my-documents'));
-    const docs = d.documents || [];
-    if (!docs.length) return;
+    const me = user();
+    const isRecycler = me?.role === 'RECYCLER';
 
-    // Load previously dismissed notification IDs from the browser's memory
-    const dismissed = JSON.parse(localStorage.getItem('traceloop_dismissed_notifs') || '[]');
+    // 1. Fetch KYC docs and role-appropriate item list simultaneously
+    const promises = [api('/api/v1/kyc/my-documents')];
+    if (isRecycler) {
+      promises.push(api('/devices/my-devices')); // Recyclers check owned inventory
+    } else {
+      promises.push(api('/transfers/incoming')); // Buyers/First Buyers check pending handoffs
+    }
 
-    let alertHtml = '<div class="stack" id="notif-stack" style="margin-bottom:24px;">';
-    let hasVisible = false;
+    const [kycRes, secondaryRes] = await Promise.allSettled(promises);
+
+    const docs = kycRes.status === 'fulfilled' ? envelope(kycRes.value).documents || [] : [];
+    const secondaryData = secondaryRes.status === 'fulfilled' ? envelope(secondaryRes.value) : {};
     
+    const itemsList = isRecycler 
+      ? (secondaryData.devices || secondaryData || []) 
+      : (secondaryData.incoming_transfers || secondaryData || []);
+
+    if (!docs.length && (!Array.isArray(itemsList) || !itemsList.length)) return;
+
+    const dismissed = JSON.parse(localStorage.getItem('traceloop_dismissed_notifs') || '[]');
+    let alertHtml = '<div class="stack" id="notif-stack" style="margin-bottom:32px; display:flex; flex-direction:column; gap:12px;">';
+    let hasVisible = false;
+
+    // Beautiful UI Wrapper for Alerts
+    const buildNotice = (id, type, icon, title, desc, actionHtml = '') => {
+      const closeBtn = `<button class="close-notif" data-id="${id}" style="position:absolute; top:12px; right:12px; background:none; border:none; font-size:1.4rem; cursor:pointer; opacity:0.4; transition:opacity 0.2s; line-height:1; padding:4px;">&times;</button>`;
+      return `
+        <div class="notice ${type}" style="position:relative; display:flex; gap:16px; align-items:flex-start; padding:16px 20px; border-radius:var(--radius); overflow:hidden;">
+          <div style="font-size:1.6rem; line-height:1; margin-top:2px;">${icon}</div>
+          <div style="flex:1; padding-right:24px;">
+            <strong style="display:block; font-size:1.05rem; margin-bottom:4px; font-family:'Space Grotesk',sans-serif;">${title}</strong>
+            <span style="display:block; font-size:0.9rem; line-height:1.5; opacity:0.9;">${desc}</span>
+            ${actionHtml ? `<div style="margin-top:12px;">${actionHtml}</div>` : ''}
+          </div>
+          ${closeBtn}
+        </div>`;
+    };
+
+    // 2. Render KYC Notifications
     docs.forEach(doc => {
-      // If the user already closed this banner, skip rendering it!
       if (dismissed.includes(doc.doc_id)) return;
       hasVisible = true;
 
-      // The elegant close button
-      const closeBtn = `<button class="close-notif" data-id="${doc.doc_id}" style="background:none;border:none;font-size:1.4rem;cursor:pointer;opacity:0.6;margin-left:auto;padding:0 0 0 12px;line-height:1;">&times;</button>`;
-
       if (doc.status === 'PENDING') {
-        alertHtml += `
-          <div class="notice info" style="display:flex; align-items:center;">
-            <div style="flex:1">⏳ <strong>Review Pending:</strong> Your document for ${doc.serial_for_device ? `<span class="mono">${esc(doc.serial_for_device)}</span>` : 'account verification'} is being reviewed.</div>
-            ${closeBtn}
-          </div>`;
+        alertHtml += buildNotice(
+          doc.doc_id, 'info', '⏳', 
+          'Document Review Pending', 
+          `Your upload for ${doc.serial_for_device ? `<span class="mono">${esc(doc.serial_for_device)}</span>` : 'account verification'} is currently being reviewed by the admin team.`
+        );
       } else if (doc.status === 'ACCEPTED' && doc.serial_for_device) {
-        alertHtml += `
-          <div class="notice success" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
-            <div style="flex:1">✅ <strong>Invoice Approved!</strong> Your purchase proof for <span class="mono">${esc(doc.serial_for_device)}</span> has been verified. You can now mint this device on-chain.</div>
-            <a class="button primary small" href="register-device.html?serial=${encodeURIComponent(doc.serial_for_device)}">Register Device</a>
-            ${closeBtn}
-          </div>`;
+        alertHtml += buildNotice(
+          doc.doc_id, 'success', '✅', 
+          'Purchase Proof Approved', 
+          `Your invoice for <span class="mono">${esc(doc.serial_for_device)}</span> was verified. You can now mint this device's passport on-chain.`,
+          `<a class="button primary small" href="register-device.html?serial=${encodeURIComponent(doc.serial_for_device)}">Register Device Now</a>`
+        );
       } else if (doc.status === 'REJECTED') {
-        alertHtml += `
-          <div class="notice error" style="display:flex; align-items:flex-start;">
-            <div style="flex:1">
-              ❌ <strong>Document Rejected:</strong> Your upload for ${doc.serial_for_device ? `<span class="mono">${esc(doc.serial_for_device)}</span>` : 'verification'} was rejected. 
-              <br><strong>Reason:</strong> ${esc(doc.rejection_reason || 'Invalid document.')}
-            </div>
-            ${closeBtn}
-          </div>`;
+        alertHtml += buildNotice(
+          doc.doc_id, 'error', '❌', 
+          'Document Rejected', 
+          `Your upload for ${doc.serial_for_device ? `<span class="mono">${esc(doc.serial_for_device)}</span>` : 'verification'} was rejected.<br><strong style="margin-top:4px;display:block;">Reason:</strong> ${esc(doc.rejection_reason || 'Invalid document.')}`
+        );
       }
     });
-    
+
+    // 3. Render Role-Specific Notifications (Recycler Inventory vs Incoming Handoffs)
+    if (Array.isArray(itemsList)) {
+      itemsList.forEach(item => {
+        const itemId = item.transfer_id || item.device_id;
+        if (dismissed.includes(itemId)) return;
+
+        if (isRecycler) {
+          // For Recycler: Notify when a completed device is ready for recycling processing
+          hasVisible = true;
+          alertHtml += buildNotice(
+            itemId, 'success', '♻️', 
+            'Device Ready for Recycling', 
+            `Device <span class="mono">${esc(item.device_id)}</span> has been transferred to your facility and is ready for final recycling completion.`,
+            `<a class="button primary small" href="recycling.html">Open Recycling Desk</a>`
+          );
+        } else {
+          // For Buyers & First Buyers: Render incoming transfer notifications
+          if (item.status === 'PENDING') {
+            hasVisible = true;
+            alertHtml += buildNotice(
+              itemId, 'warning', '📦', 
+              'Incoming Transfer Required', 
+              `You have a pending device handoff for <span class="mono">${esc(item.device_id)}</span> from User ${esc((item.from_user_id || '').slice(0,8))}...`,
+              `<button class="button primary small" onclick="document.getElementById('incoming')?.scrollIntoView({behavior:'smooth'})">View Inbox</button>`
+            );
+          } else if (item.status === 'VERIFIED' || item.status === 'ACCEPTED') {
+            hasVisible = true;
+            alertHtml += buildNotice(
+              itemId, 'success', '🟢', 
+              'Device Verified & Ready', 
+              `Device <span class="mono">${esc(item.device_id)}</span> has been verified on-chain.`,
+              `<a class="button primary small" href="dashboard.html">View Dashboard</a>`
+            );
+          }
+        }
+      });
+    }
+
     alertHtml += '</div>';
-    
-    // Only inject the HTML if there is actually something to show
+
     if (hasVisible) {
       root.insertAdjacentHTML('afterbegin', alertHtml);
-      
-      // Wire up the close buttons to save to localStorage and fade out
+
+      // Smooth CSS Collapse Animation for Dismissal
       $$('.close-notif').forEach(btn => {
+        btn.addEventListener('mouseenter', e => e.currentTarget.style.opacity = '1');
+        btn.addEventListener('mouseleave', e => e.currentTarget.style.opacity = '0.4');
         btn.addEventListener('click', (e) => {
-          const docId = e.currentTarget.dataset.id;
-          dismissed.push(docId);
+          const id = e.currentTarget.dataset.id;
+          dismissed.push(id);
           localStorage.setItem('traceloop_dismissed_notifs', JSON.stringify(dismissed));
           
           const noticeDiv = e.currentTarget.closest('.notice');
-          noticeDiv.style.opacity = '0';
-          setTimeout(() => noticeDiv.style.display = 'none', 300); // Smooth fade out
+          const height = noticeDiv.offsetHeight;
+          
+          noticeDiv.style.height = height + 'px';
+          noticeDiv.style.transition = 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)';
+          
+          requestAnimationFrame(() => {
+            noticeDiv.style.opacity = '0';
+            noticeDiv.style.transform = 'scale(0.98)';
+            noticeDiv.style.height = '0px';
+            noticeDiv.style.paddingTop = '0px';
+            noticeDiv.style.paddingBottom = '0px';
+            noticeDiv.style.marginTop = '0px';
+            noticeDiv.style.marginBottom = '0px';
+            noticeDiv.style.borderWidth = '0px';
+          });
+          
+          setTimeout(() => noticeDiv.remove(), 300);
         });
       });
     }
