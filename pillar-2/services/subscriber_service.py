@@ -4,11 +4,11 @@ import base64
 import logging
 import struct
 import uuid
-from datetime import datetime
 from algosdk.v2client import indexer
 from algosdk.encoding import checksum
 from sqlalchemy.exc import IntegrityError
 from algosdk.encoding import encode_address
+from datetime import datetime, timezone
 
 # Wired directly to the compliant PostgreSQL database.py
 from database import SessionLocal
@@ -203,9 +203,14 @@ class SubscriberDaemon:
         device_id = decoded[0]
         event_name = event_def["name"]
 
+        # 1. Extract the on-chain timestamp from the block header or the ARC-28 event args
+        chain_ts = decoded[-1] if len(decoded) > 0 and isinstance(decoded[-1], int) else None
+        block_unix_time = txn.get("round-time") or chain_ts or int(time.time())
+        real_block_time = datetime.fromtimestamp(block_unix_time, tz=timezone.utc)
+
         metadata = {
             "event_name": event_name,
-            "chain_timestamp": decoded[-1],
+            "chain_timestamp": block_unix_time,
             "sender": txn.get("sender")
         }
 
@@ -229,9 +234,18 @@ class SubscriberDaemon:
 
         db = SessionLocal()
         try:
-            # Idempotency check: Don't insert the same tx_hash twice
+            # 2. Check if the event already exists
             exists = db.query(LedgerEvent).filter_by(tx_hash=txn["id"]).first()
-            if not exists:
+
+            if exists:
+                # SELF-HEALING: If already present, overwrite the faulty ingestion time with the real block time
+                exists.timestamp = real_block_time
+                exists.confirmed_at = real_block_time
+                exists.metadata_ = metadata
+                db.commit()
+                logger.info(f"Self-healed timestamp for {event_name} ({txn['id'][:8]}…) → {real_block_time}")
+            else:
+                # Insert fresh record with true block timestamp
                 new_event = LedgerEvent(
                     id=str(uuid.uuid4()),
                     device_id=device_id,
@@ -241,22 +255,21 @@ class SubscriberDaemon:
                     block_number=txn["confirmed-round"],
                     chain_status=ChainStatus.CONFIRMED,
                     metadata_=metadata,
-                    confirmed_at=datetime.utcnow()
+                    timestamp=real_block_time,
+                    confirmed_at=real_block_time
                 )
                 db.add(new_event)
                 db.commit()
-                logger.info(f"Successfully mirrored {event_name} for device {device_id} to DB.")
-                
+                logger.info(f"Successfully mirrored {event_name} for device {device_id} to DB at {real_block_time}")
+
         except IntegrityError:
-            # GRACEFUL FIX: Catch the Foreign Key error, rollback, and skip quietly.
             db.rollback()
             logger.warning(f"Skipped {event_name} for {device_id}: Device not found in local DB.")
-            
+
         except Exception as e:
-            # Catch anything else without crashing the daemon
             db.rollback()
             logger.error(f"Unexpected DB Error while mirroring {device_id}: {e}")
-            
+
         finally:
             db.close()
 
