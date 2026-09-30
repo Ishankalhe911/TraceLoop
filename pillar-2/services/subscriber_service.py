@@ -75,7 +75,7 @@ ARC28_EVENTS = {
     get_selector("HardwareChangeDeclared(string,string,uint64)"): {
         "name": "HardwareChangeDeclared",
         "args": ["string", "string", "uint64"],
-        "event_type": "VERIFIED"
+        "event_type": "HARDWARE_CHANGED"
     },
     get_selector("DisputeRaised(string,address,uint64,uint64)"): {
         "name": "DisputeRaised",
