@@ -4,7 +4,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
-from typing import Any
+from typing import Optional
 
 # Import frozen models, RBAC, and Ledger Service
 from database import get_db, Device, DeviceHardwareLog, ChangeType, User, DeviceStatus
@@ -31,10 +31,12 @@ def generate_sha256(data: str) -> str:
 
 # --- PAYLOAD SCHEMAS ---
 class HardwareChangePayload(BaseModel):
-    component: str = Field(..., description="E.g., RAM, Storage, Battery")
+    component: str = Field(..., min_length=1, max_length=80, description="E.g., RAM, Storage, Battery")
     change_type: ChangeType
-    old_spec: str = Field(None, description="Previous spec (if known)")
-    new_spec: str = Field(..., description="The newly installed spec")
+    # Accepted for backward compatibility, but the server never trusts this value.
+    # The authoritative old specification is read from Device.current_config.
+    old_spec: Optional[str] = Field(None, description="Previous spec (informational only)")
+    new_spec: str = Field(..., min_length=1, max_length=200, description="The newly installed spec")
 
 
 # --- ROUTES ---
@@ -47,66 +49,103 @@ def declare_hardware_change(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Logs a hardware upgrade/replacement.
-    Invalidates current stamp and updates the Algorand blockchain.
+    Current owner declares a hardware change.
+
+    The server derives the authoritative old specification from the current
+    device configuration, updates the configuration, writes the new config hash
+    on-chain, appends the hardware log, and invalidates the current verification
+    stamp so a service-center re-verification is required before resale.
     """
     device = db.query(Device).filter(Device.id == device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found.")
 
-    # Terminal state guard — checked first before any other business logic
+    # Terminal state guard — no further hardware mutations are possible.
     if device.status in [DeviceStatus.RECYCLED, DeviceStatus.EXPORTED]:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Cannot modify a terminal device. Device has been RECYCLED or EXPORTED."
         )
 
-    # 1. Authorization: Only the current owner can declare a change
+    # Only the current owner may declare a hardware change.
     if device.current_owner_id != current_user.id:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, 
+            status_code=status.HTTP_403_FORBIDDEN,
             detail="Only the current device owner can declare hardware changes."
         )
 
-    # 2. Hard Block: Cannot alter a disputed device (SOP Rule 6)
+    # Disputed devices are frozen until the dispute is resolved.
     if device.status == DeviceStatus.DISPUTED:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, 
+            status_code=status.HTTP_409_CONFLICT,
             detail="Hardware changes are blocked while the device is in a DISPUTED state."
         )
 
-    # 3. Apply the hardware change to the current_config dictionary
-    updated_config = device.current_config.copy()
-    
-    # Case-insensitive key replacement (e.g., matching "ram" to "RAM")
-    existing_key = next((k for k in updated_config.keys() if k.lower() == payload.component.lower()), None)
-    if existing_key:
-        updated_config[existing_key] = payload.new_spec
-    else:
-        updated_config[payload.component] = payload.new_spec
+    component = payload.component.strip()
+    if not component:
+        raise HTTPException(status_code=422, detail="Component name cannot be empty.")
 
-    # 4. Hash the new configuration for the blockchain
+    updated_config = dict(device.current_config or {})
+
+    # Resolve a component key case-insensitively so `RAM` and `ram` do not
+    # create duplicate logical fields.
+    existing_key = next(
+        (k for k in updated_config.keys() if str(k).lower() == component.lower()),
+        None
+    )
+
+    actual_old_spec = updated_config.get(existing_key) if existing_key else None
+    change_type = payload.change_type
+
+    # Enforce semantically correct change types.
+    if change_type in [ChangeType.UPGRADED, ChangeType.REPLACED, ChangeType.REMOVED] and existing_key is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot {change_type.value.lower()} '{component}': component is not present in the current configuration."
+        )
+
+    if change_type == ChangeType.ADDED and existing_key is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Component '{existing_key}' already exists. Use UPGRADED or REPLACED instead."
+        )
+
+    # Apply the change to the current configuration. The client-provided
+    # old_spec is intentionally ignored for integrity; the server records the
+    # actual previous value from the database.
+    if change_type == ChangeType.REMOVED:
+        del updated_config[existing_key]
+        logged_new_spec = "REMOVED"
+    elif existing_key is not None:
+        updated_config[existing_key] = payload.new_spec.strip()
+        logged_new_spec = payload.new_spec.strip()
+    else:
+        updated_config[component] = payload.new_spec.strip()
+        logged_new_spec = payload.new_spec.strip()
+
     config_str = json.dumps(updated_config, sort_keys=True)
     new_config_hash = generate_sha256(config_str)
 
     try:
-        # 5. Synchronous Blockchain Mutation (Pillar 1)
+        # Pillar 1: operator-signed contract call. The authenticated user is
+        # the business actor; the configured operator account commits the
+        # protocol mutation to Algorand.
         chain_result = ledger_service.declare_hardware_change(
             device_id=device.id,
             new_config_hash=new_config_hash
         )
 
-        # 6. Update PostgreSQL Device Profile (Pillar 3)
+        # Pillar 3: mirror the new config and append the audit record only after
+        # the blockchain transaction succeeds.
         device.current_config = updated_config
         device.stamp_valid = False
 
-        # 7. Append to the Immutable Hardware Log (Pillar 3)
         log_entry = DeviceHardwareLog(
             device_id=device.id,
-            component=payload.component,
-            change_type=payload.change_type,
-            old_spec=payload.old_spec,
-            new_spec=payload.new_spec,
+            component=existing_key or component,
+            change_type=change_type,
+            old_spec=None if actual_old_spec is None else str(actual_old_spec),
+            new_spec=logged_new_spec,
             declared_by=current_user.id,
             stamp_invalidated=True
         )
@@ -115,15 +154,20 @@ def declare_hardware_change(
 
         return standard_response({
             "device_id": device.id,
+            "component": existing_key or component,
+            "change_type": change_type.value,
+            "old_spec": None if actual_old_spec is None else str(actual_old_spec),
+            "new_spec": logged_new_spec,
+            "current_config": updated_config,
             "chain_tx_id": chain_result["tx_id"],
             "stamp_valid": False,
-            "message": "Hardware change recorded on-chain. Re-verification required before next transfer."
+            "message": "Hardware change recorded on-chain. Re-verification is required before listing or the next ownership transfer."
         })
 
     except Exception as e:
         db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Ledger hardware update failed: {str(e)}"
         )
 
@@ -153,6 +197,7 @@ def get_hardware_log(
                 "change_type": log.change_type,
                 "old_spec": log.old_spec,
                 "new_spec": log.new_spec,
+                "declared_by": log.declared_by,
                 "declared_at": log.created_at.isoformat() + "Z"
             } for log in logs
         ]
