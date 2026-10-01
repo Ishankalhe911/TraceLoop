@@ -12,8 +12,28 @@ const user  = () => { try { return JSON.parse(localStorage.getItem(USER_KEY) || 
 const esc = v => String(v ?? '').replace(/[&<>'"]/g, c =>
   ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#039;', '"':'&quot;' }[c]));
 
-const fmtDate = v => v ? new Date(v).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '—';
+const fmtDate = v => {
+  if (!v) return '—';
+  
+  // 1. Sanitize malformed +00:00Z strings from Python
+  let clean = String(v).trim();
+  if (clean.includes('+') && clean.endsWith('Z')) {
+    clean = clean.slice(0, -1);
+  }
 
+  let d;
+  // 2. Parse Unix numeric timestamp vs ISO string
+  if (!isNaN(clean) && Number(clean) > 10000) {
+    const ms = Number(clean) < 1e12 ? Number(clean) * 1000 : Number(clean);
+    d = new Date(ms);
+  } else {
+    d = new Date(clean);
+  }
+
+  return (d instanceof Date && !isNaN(d.getTime()))
+    ? d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
+    : '—';
+};
 const money = v => v == null
   ? 'Price on request'
   : new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(v);
@@ -432,29 +452,51 @@ function initRegister() {
   const dropzone  = $('#kyc-dropzone');
   const submitBtn = $('#btn-kyc-submit');
 
-  fileInput?.addEventListener('change', () => {
-    const f = fileInput.files[0];
-    if (!f) return;
-    
-    dropzone.classList.add('has-file');
-    $('#dz-filename').textContent = `${f.name} (${(f.size / 1024).toFixed(1)} KB)`;
-    
-    // THE FIX: Lock the button and show the user that cryptography is happening
-    const btnToLock = typeof submitBtn !== 'undefined' ? submitBtn : submitKycBtn;
-    btnToLock.disabled = true; 
-    
-    const preview = $('#hash-preview');
-    if (preview) {
-      preview.style.display = 'block';
-      $('#hash-value').innerHTML = '<span style="color:var(--amber)">Computing SHA-256... ⏳</span>';
-    }
+  fileInput?.addEventListener('change', async () => {
+  const f = fileInput.files[0];
+  if (!f) return;
 
-    hashFile(f).then(h => {
-      $('#hash-value').innerHTML = `<span style="color:var(--green)">🔒 ${h}</span>`;
-      btnToLock.disabled = false;
-    });
-  });
+  dropzone.classList.add('has-file');
 
+  $('#dz-filename').textContent =
+    `${f.name} (${(f.size / 1024).toFixed(1)} KB)`;
+
+  const btnToLock = submitBtn;
+
+  btnToLock.disabled = true;
+
+  const preview = $('#hash-preview');
+
+  if (preview) {
+    preview.style.display = 'block';
+
+    $('#hash-value').innerHTML =
+      '<span style="color:var(--amber)">Computing SHA-256... ⏳</span>';
+  }
+
+  try {
+    const h = await hashFile(f);
+
+    $('#hash-value').innerHTML =
+      `<span style="color:var(--green)">🔒 ${h}</span>`;
+
+    btnToLock.disabled = false;
+
+  } catch (err) {
+
+    $('#hash-value').innerHTML =
+      `<span style="color:var(--red)">
+        Unable to generate SHA-256 hash.
+       </span>`;
+
+    btnToLock.disabled = true;
+
+    toast(
+      'Could not generate the document hash.',
+      'error'
+    );
+  }
+});
   // Drag-and-drop
   dropzone?.addEventListener('dragover',  e => { e.preventDefault(); dropzone.classList.add('dragover'); });
   dropzone?.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
@@ -632,7 +674,7 @@ async function loadDashboard() {
         <!-- Raise dispute modal -->
         <div id="dispute-modal" style="display:none;position:fixed;inset:0;background:rgba(13,31,23,.7);z-index:500;place-items:center">
           <div class="card" style="max-width:480px;width:90%;margin:auto" onclick="event.stopPropagation()">
-            <h3 style="margin-bottom:16px">Raise a dispute</h3>
+            <h3 style="margin-bottom:16px">Report a dispute</h3>
             <form id="dispute-form" class="form-grid">
               <label>Device ID <span class="req">*</span>
               <input name="device_id" required placeholder="TL-BRAND-SERIAL"
@@ -765,6 +807,78 @@ async function loadDashboard() {
             </div>
           </div>
         </div>
+                <div class="panel" id="analytics">
+          <div class="panel-head">
+            <div>
+              <span class="eyebrow">Regulator view</span>
+              <h2>Lifecycle analytics</h2>
+            </div>
+            <button class="button ghost small" id="refresh-analytics">Refresh</button>
+          </div>
+
+          <div id="analytics-grid" class="admin-grid">
+            <div class="admin-card">
+              <span class="eyebrow">Total devices</span>
+              <span class="metric" id="analytics-total">—</span>
+              <p class="muted">Registered devices</p>
+            </div>
+
+            <div class="admin-card">
+              <span class="eyebrow">Registered</span>
+              <span class="metric" id="analytics-registered">—</span>
+              <p class="muted">Current lifecycle state</p>
+            </div>
+
+            <div class="admin-card">
+              <span class="eyebrow">Verified</span>
+              <span class="metric" id="analytics-verified">—</span>
+              <p class="muted">Currently verified</p>
+            </div>
+
+            <div class="admin-card">
+              <span class="eyebrow">Transferred</span>
+              <span class="metric" id="analytics-transferred">—</span>
+              <p class="muted">Ownership transitions</p>
+            </div>
+
+            <div class="admin-card">
+              <span class="eyebrow">Disputed</span>
+              <span class="metric" id="analytics-disputed">—</span>
+              <p class="muted">Devices under dispute</p>
+            </div>
+
+            <div class="admin-card">
+              <span class="eyebrow">Recycled</span>
+              <span class="metric" id="analytics-recycled">—</span>
+              <p class="muted">Terminal recycled devices</p>
+            </div>
+
+            <div class="admin-card">
+              <span class="eyebrow">Exported</span>
+              <span class="metric" id="analytics-exported">—</span>
+              <p class="muted">Terminal exported devices</p>
+            </div>
+
+            <div class="admin-card">
+              <span class="eyebrow">Hardware changes</span>
+              <span class="metric" id="analytics-hardware">—</span>
+              <p class="muted">Recorded configuration changes</p>
+            </div>
+
+            <div class="admin-card">
+              <span class="eyebrow">Recycling rate</span>
+              <span class="metric" id="analytics-rate">—</span>
+              <p class="muted">Recycled ÷ total devices</p>
+            </div>
+          </div>
+
+          <div style="margin-top:24px">
+            <div class="section-label">Total On-chain events</div>
+            <div id="analytics-events" class="stack" style="margin-top:10px">
+              <div class="loading">Loading analytics…</div>
+            </div>
+          </div>
+        </div>
 
         <div class="panel" id="disputes">
           <div class="panel-head"><div><span class="eyebrow">Open disputes</span><h2>Dispute queue</h2></div></div>
@@ -783,10 +897,7 @@ async function loadDashboard() {
           <div id="devices-list" class="stack"><div class="loading">Loading…</div></div>
         </div>
 
-        <div class="panel" id="verifiers">
-          <div class="panel-head"><div><span class="eyebrow">Verifier oversight</span><h2>Authorized service centers</h2></div></div>
-          <div id="verifiers-list" class="stack"><div class="loading">Loading…</div></div>
-        </div>
+        
       `;
     }
   } // <--- END OF ELSE BLOCK
@@ -812,47 +923,844 @@ async function loadDashboard() {
 }
 
 /* ── My devices ──────────────────────────────────────────────── */
+
 async function loadMyDevices() {
   const el = $('#my-devices');
   if (!el) return;
+
   try {
     const d = envelope(await api('/devices/my-devices'));
     const list = (d.devices || d || []);
-    el.innerHTML = list.length
-      ? list.map(x => `
-        <article class="device-card">
-          <div class="device-top">
-            <span class="mono">${esc(x.device_id)}</span>
-            ${chip(x.status === 'TRANSFERRED' ? 'NEWLY ACQUIRED' : x.status)}
-          </div>
-          <h3 style="margin:8px 0 6px">${esc(x.brand_name || x.brand || 'Laptop')}</h3>
-          <p class="muted" style="font-size:.82rem">
-            ${esc(Object.entries(x.current_config || {}).slice(0,3).map(([k,v]) => `${k}: ${v}`).join(' · ') || 'Config on file')}
-          </p>
-          <p class="muted" style="font-size:.78rem;margin-top:4px">
-            Stamp: ${x.stamp_valid
-              ? '<span style="color:var(--green)">✓ Valid</span>'
-              : '<span style="color:var(--red)">✗ Invalid — re-verify first</span>'}
-          </p>
-          <div class="card-actions">
-            <a class="button ghost small" href="track.html?id=${encodeURIComponent(x.device_id)}">View passport</a>
-            ${x.is_for_sale
-              ? `<button class="button danger small" data-unlist="${esc(x.device_id)}">Unlist</button>`
-              : `<button class="button secondary small" data-list="${esc(x.device_id)}">List for sale</button>`
-            }
-            <button class="button ghost small" data-transfer="${esc(x.device_id)}">Transfer</button>
-          </div>
-        </article>`).join('')
-      : empty('No devices yet', 'Register a laptop or receive a verified transfer.');
 
-    $$('[data-list]',    el).forEach(b => b.addEventListener('click', () => openListModal(b.dataset.list)));
-    $$('[data-unlist]',  el).forEach(b => b.addEventListener('click', () => unlistDevice(b.dataset.unlist, b)));
-    $$('[data-transfer]',el).forEach(b => b.addEventListener('click', () => initiateTransfer(b.dataset.transfer, b)));
+    el.innerHTML = list.length
+      ? list.map(x => {
+          const stampValid = !!x.stamp_valid;
+          const terminal = ['RECYCLED', 'EXPORTED'].includes(
+            String(x.status || '').toUpperCase()
+          );
+
+          return `
+            <article class="device-card">
+              <div class="device-top">
+                <span class="mono">${esc(x.device_id)}</span>
+                ${chip(x.status === 'TRANSFERRED' ? 'NEWLY ACQUIRED' : x.status)}
+              </div>
+
+              <h3 style="margin:8px 0 6px">
+                ${esc(x.brand_name || x.brand || 'Laptop')}
+              </h3>
+
+              <p class="muted" style="font-size:.82rem">
+                ${esc(
+                  Object.entries(x.current_config || {})
+                    .slice(0, 3)
+                    .map(([k, v]) => `${k}: ${v}`)
+                    .join(' · ') || 'Config on file'
+                )}
+              </p>
+
+              <p class="muted" style="font-size:.78rem;margin-top:4px">
+                Stamp:
+                ${
+                  stampValid
+                    ? '<span style="color:var(--green)">✓ Valid</span>'
+                    : '<span style="color:var(--red)">✗ Invalid — re-verify first</span>'
+                }
+              </p>
+
+              ${
+                !stampValid && !terminal
+                  ? `
+                    <div class="notice warning"
+                         style="margin-top:10px;padding:10px 12px;font-size:.78rem">
+                      Hardware/configuration was changed or verification is no longer
+                      valid. Re-verification is required before resale or transfer.
+                    </div>
+                  `
+                  : ''
+              }
+
+              <div class="card-actions">
+
+                <a class="button ghost small"
+                   href="track.html?id=${encodeURIComponent(x.device_id)}">
+                  View passport
+                </a>
+
+                <button
+                  class="button secondary small"
+                  data-hardware-change="${esc(x.device_id)}"
+                  ${
+                    terminal
+                      ? 'disabled title="Terminal devices cannot be modified"'
+                      : ''
+                  }>
+                  Declare hardware change
+                </button>
+
+                ${
+                  x.is_for_sale
+                    ? `
+                      <button
+                        class="button danger small"
+                        data-unlist="${esc(x.device_id)}">
+                        Unlist
+                      </button>
+                    `
+                    : `
+                      <button
+                        class="button secondary small"
+                        data-list="${esc(x.device_id)}"
+                        ${
+                          !stampValid || terminal
+                            ? 'disabled title="A valid verification stamp is required before listing"'
+                            : ''
+                        }>
+                        List for sale
+                      </button>
+                    `
+                }
+
+                <button
+                  class="button ghost small"
+                  data-transfer="${esc(x.device_id)}"
+                  ${
+                    !stampValid || terminal
+                      ? 'disabled title="A valid verification stamp is required before transfer"'
+                      : ''
+                  }>
+                  Transfer
+                </button>
+
+              </div>
+            </article>
+          `;
+        }).join('')
+      : empty(
+          'No devices yet',
+          'Register a laptop or receive a verified transfer.'
+        );
+
+    $$('[data-list]', el).forEach(b =>
+      b.addEventListener('click', () =>
+        openListModal(b.dataset.list)
+      )
+    );
+
+    $$('[data-unlist]', el).forEach(b =>
+      b.addEventListener('click', () =>
+        unlistDevice(b.dataset.unlist, b)
+      )
+    );
+
+    $$('[data-transfer]', el).forEach(b =>
+      b.addEventListener('click', () =>
+        initiateTransfer(b.dataset.transfer, b)
+      )
+    );
+
+    $$('[data-hardware-change]', el).forEach(b =>
+      b.addEventListener('click', () =>
+        openHardwareChangeModal(b.dataset.hardwareChange)
+      )
+    );
+
   } catch (e) {
-    el.innerHTML = empty('Unable to load devices', e.message);
+    el.innerHTML = empty(
+      'Unable to load devices',
+      e.message
+    );
   }
 }
 
+/* ── Hardware Delta Engine: owner-declared hardware changes ─────── */
+
+function ensureHardwareChangeModal() {
+  if ($('#hardware-change-modal')) return;
+
+  document.body.insertAdjacentHTML('beforeend', `
+    <div id="hardware-change-modal"
+         style="
+           display:none;
+           position:fixed;
+           inset:0;
+           background:rgba(13,31,23,.72);
+           z-index:600;
+           place-items:center;
+           padding:20px;
+         ">
+
+      <div class="card"
+           style="
+             max-width:620px;
+             width:100%;
+             max-height:90vh;
+             overflow:auto;
+           "
+           onclick="event.stopPropagation()">
+
+        <div style="
+          display:flex;
+          justify-content:space-between;
+          align-items:flex-start;
+          gap:16px;
+        ">
+
+          <div>
+            <span class="eyebrow">Hardware Delta Engine</span>
+
+            <h2 style="margin:4px 0 6px;">
+              Declare hardware change
+            </h2>
+
+            <p class="muted" style="font-size:.86rem;">
+              Record a component change against this device's existing passport.
+            </p>
+          </div>
+
+          <button
+            class="button ghost small"
+            type="button"
+            id="close-hardware-change-modal">
+            Close
+          </button>
+
+        </div>
+
+        <div
+          id="hardware-current-config"
+          class="notice info"
+          style="margin:18px 0;padding:12px 14px;">
+          Loading current configuration…
+        </div>
+
+        <form id="hardware-change-form" class="form-grid">
+
+          <input
+            type="hidden"
+            id="hardware-device-id"
+            name="device_id">
+
+          <label>
+            Component <span class="req">*</span>
+
+            <input
+              id="hardware-component"
+              name="component"
+              required
+              maxlength="80"
+              placeholder="RAM, Storage, Battery, SSD…">
+          </label>
+
+          <label>
+            Change type <span class="req">*</span>
+
+            <select
+              id="hardware-change-type"
+              name="change_type"
+              required>
+
+              <option value="">Select change</option>
+              <option value="UPGRADED">Upgraded</option>
+              <option value="REPLACED">Replaced</option>
+              <option value="ADDED">Added</option>
+              <option value="REMOVED">Removed</option>
+
+            </select>
+          </label>
+
+          <label>
+            Previous specification
+
+            <input
+              id="hardware-old-spec"
+              name="old_spec"
+              readonly
+              placeholder="Loaded from current passport">
+          </label>
+
+          <label>
+            New specification <span class="req">*</span>
+
+            <input
+              id="hardware-new-spec"
+              name="new_spec"
+              maxlength="200"
+              placeholder="e.g. 16GB DDR4"
+              required>
+          </label>
+
+          <div
+            class="notice warning"
+            style="margin-top:4px;padding:12px 14px;">
+
+            <strong>Important:</strong>
+            Recording a hardware change invalidates the current verification stamp.
+
+            <br><br>
+
+            The device must be physically re-verified before it can be listed
+            or transferred again.
+
+          </div>
+
+          <div style="
+            display:flex;
+            gap:10px;
+            justify-content:flex-end;
+          ">
+
+            <button
+              class="button ghost"
+              type="button"
+              id="cancel-hardware-change">
+              Cancel
+            </button>
+
+            <button
+              class="button primary"
+              type="submit">
+              Record hardware change
+            </button>
+
+          </div>
+
+        </form>
+
+        <div
+          id="hardware-change-result"
+          style="margin-top:16px;">
+        </div>
+
+        <div style="margin-top:24px;">
+
+          <div class="eyebrow">
+            Hardware change history
+          </div>
+
+          <div
+            id="hardware-log-list"
+            class="stack"
+            style="margin-top:10px;">
+
+            <div class="loading">
+              No device selected.
+            </div>
+
+          </div>
+
+        </div>
+
+      </div>
+    </div>
+  `);
+
+  const modal = $('#hardware-change-modal');
+
+  $('#close-hardware-change-modal')
+    ?.addEventListener('click', closeHardwareChangeModal);
+
+  $('#cancel-hardware-change')
+    ?.addEventListener('click', closeHardwareChangeModal);
+
+  modal?.addEventListener('click', e => {
+    if (e.target === modal) {
+      closeHardwareChangeModal();
+    }
+  });
+
+  $('#hardware-change-form')
+    ?.addEventListener('submit', submitHardwareChange);
+
+  $('#hardware-component')
+    ?.addEventListener('input', e => {
+      e.target.value = e.target.value.trimStart();
+      refreshHardwareOldSpec();
+    });
+
+  $('#hardware-change-type')
+    ?.addEventListener('change', () => {
+      refreshHardwareOldSpec();
+
+      const type = $('#hardware-change-type')?.value;
+      const newSpec = $('#hardware-new-spec');
+
+      if (!newSpec) return;
+
+      if (type === 'REMOVED') {
+        newSpec.value = 'REMOVED';
+        newSpec.disabled = true;
+      } else {
+        if (newSpec.value === 'REMOVED') {
+          newSpec.value = '';
+        }
+
+        newSpec.disabled = false;
+        newSpec.placeholder =
+          type === 'ADDED'
+            ? 'e.g. Secondary SSD 1TB'
+            : 'e.g. 16GB DDR4';
+      }
+    });
+}
+
+
+function closeHardwareChangeModal() {
+  const modal = $('#hardware-change-modal');
+
+  if (modal) {
+    modal.style.display = 'none';
+  }
+}
+
+
+function configValueForComponent(config, component) {
+  if (!config || !component) return null;
+
+  const key = Object.keys(config).find(
+    k =>
+      String(k).toLowerCase() ===
+      String(component).trim().toLowerCase()
+  );
+
+  return key ? config[key] : null;
+}
+
+
+async function openHardwareChangeModal(deviceId) {
+  ensureHardwareChangeModal();
+
+  $('#hardware-device-id').value = deviceId;
+
+  $('#hardware-component').value = '';
+  $('#hardware-change-type').value = '';
+  $('#hardware-old-spec').value = '';
+  $('#hardware-new-spec').value = '';
+  $('#hardware-new-spec').disabled = false;
+
+  $('#hardware-change-result').innerHTML = '';
+
+  $('#hardware-current-config').innerHTML =
+    'Loading current configuration…';
+
+  $('#hardware-log-list').innerHTML =
+    '<div class="loading">Loading hardware history…</div>';
+
+  const modal = $('#hardware-change-modal');
+
+  if (modal) {
+    modal.style.display = 'grid';
+  }
+
+  try {
+
+    const deviceData = envelope(
+      await api(`/devices/${encodeURIComponent(deviceId)}`)
+    );
+
+    const device = deviceData.device || deviceData;
+
+    const config = device.current_config || {};
+    const entries = Object.entries(config);
+
+    $('#hardware-current-config').innerHTML = `
+      <strong>Current passport configuration</strong>
+
+      <div style="
+        margin-top:8px;
+        font-family:'Space Mono',monospace;
+        font-size:.78rem;
+        line-height:1.7;
+      ">
+        ${
+          entries.length
+            ? entries
+                .map(
+                  ([k, v]) =>
+                    `${esc(k)}: ${esc(v)}`
+                )
+                .join('<br>')
+            : 'No configuration recorded.'
+        }
+      </div>
+    `;
+
+    $('#hardware-change-modal').dataset.currentConfig =
+      JSON.stringify(config);
+
+    await loadHardwareLog(deviceId);
+
+    refreshHardwareOldSpec();
+
+  } catch (e) {
+
+    $('#hardware-current-config').innerHTML =
+      `<span style="color:var(--red)">
+        Unable to load device configuration:
+        ${esc(e.message)}
+      </span>`;
+
+    $('#hardware-log-list').innerHTML =
+      empty(
+        'Hardware history unavailable',
+        e.message
+      );
+  }
+}
+
+
+function refreshHardwareOldSpec() {
+  const component =
+    $('#hardware-component')?.value.trim();
+
+  const type =
+    $('#hardware-change-type')?.value;
+
+  const modal =
+    $('#hardware-change-modal');
+
+  if (!modal) return;
+
+  let config = {};
+
+  try {
+    config = JSON.parse(
+      modal.dataset.currentConfig || '{}'
+    );
+  } catch {
+    config = {};
+  }
+
+  const current =
+    configValueForComponent(
+      config,
+      component
+    );
+
+  const oldSpec =
+    $('#hardware-old-spec');
+
+  if (!oldSpec) return;
+
+  oldSpec.value =
+    current == null
+      ? ''
+      : String(current);
+
+  if (type === 'ADDED' && current != null) {
+
+    oldSpec.placeholder =
+      'Component already exists — use Upgraded/Replaced';
+
+  } else if (type !== 'ADDED' && current == null) {
+
+    oldSpec.placeholder =
+      'Component not currently recorded';
+
+  } else {
+
+    oldSpec.placeholder =
+      'Loaded from current passport';
+
+  }
+}
+
+
+async function loadHardwareLog(deviceId) {
+  const el = $('#hardware-log-list');
+
+  if (!el) return;
+
+  try {
+
+    const d = envelope(
+      await api(
+        `/device-profiles/${encodeURIComponent(deviceId)}/hardware-log`
+      )
+    );
+
+    const logs =
+      d.hardware_log || [];
+
+    if (!logs.length) {
+
+      el.innerHTML =
+        empty(
+          'No hardware changes recorded',
+          'Future component changes will appear here as append-only audit entries.'
+        );
+
+      return;
+    }
+
+    el.innerHTML =
+      logs
+        .map(
+          log => `
+            <div class="transfer-row">
+
+              <div>
+
+                <span class="mono">
+                  ${esc(log.component)}
+                </span>
+
+                <h3 style="margin:4px 0;">
+                  ${esc(log.change_type || 'CHANGE')}
+                </h3>
+
+                <p
+                  class="muted"
+                  style="font-size:.82rem;margin:0;">
+
+                  ${esc(log.old_spec ?? '—')}
+                  →
+                  ${esc(log.new_spec ?? '—')}
+
+                </p>
+
+                <p
+                  class="muted"
+                  style="font-size:.75rem;margin:4px 0 0;">
+
+                  Declared
+                  ${fmtDate(log.declared_at)}
+
+                </p>
+
+              </div>
+
+              <div class="row-actions">
+
+                <span class="chip chip-error">
+                  STAMP INVALIDATED
+                </span>
+
+              </div>
+
+            </div>
+          `
+        )
+        .join('');
+
+  } catch (e) {
+
+    el.innerHTML =
+      empty(
+        'History unavailable',
+        e.message
+      );
+  }
+}
+
+
+async function submitHardwareChange(e) {
+  e.preventDefault();
+
+  const form =
+    e.currentTarget;
+
+  const submitButton =
+    e.submitter ||
+    $('button[type="submit"]', form);
+
+  const deviceId =
+    $('#hardware-device-id')
+      ?.value
+      .trim();
+
+  const component =
+    $('#hardware-component')
+      ?.value
+      .trim();
+
+  const changeType =
+    $('#hardware-change-type')
+      ?.value;
+
+  let newSpec =
+    $('#hardware-new-spec')
+      ?.value
+      .trim();
+
+  const oldSpec =
+    $('#hardware-old-spec')
+      ?.value || null;
+
+  if (
+    !deviceId ||
+    !component ||
+    !changeType
+  ) {
+    toast(
+      'Complete the component and change type.',
+      'error'
+    );
+    return;
+  }
+
+  // REMOVED uses a deterministic value because the backend schema
+  // still expects new_spec.
+  if (changeType === 'REMOVED') {
+    newSpec = 'REMOVED';
+  }
+
+  if (!newSpec) {
+    toast(
+      'Enter the new specification.',
+      'error'
+    );
+    return;
+  }
+
+  if (
+    changeType === 'ADDED' &&
+    oldSpec
+  ) {
+    toast(
+      'That component already exists. Choose Upgraded or Replaced.',
+      'error'
+    );
+    return;
+  }
+
+  if (
+    changeType !== 'ADDED' &&
+    changeType !== 'REMOVED' &&
+    !oldSpec
+  ) {
+    toast(
+      'That component is not present in the current configuration. Choose Added.',
+      'error'
+    );
+    return;
+  }
+
+  if (
+    changeType === 'REMOVED' &&
+    !oldSpec
+  ) {
+    toast(
+      'That component is not present in the current configuration.',
+      'error'
+    );
+    return;
+  }
+
+  setBusy(
+    submitButton,
+    true,
+    'Writing change…'
+  );
+
+  try {
+
+    const d = envelope(
+      await api(
+        `/device-profiles/${encodeURIComponent(deviceId)}/hardware-change`,
+        {
+          method: 'POST',
+
+          body: JSON.stringify({
+            component,
+            change_type: changeType,
+
+            // Sent only for compatibility/display.
+            // Updated backend derives the authoritative
+            // old value directly from the database.
+            old_spec: oldSpec,
+
+            new_spec: newSpec
+          })
+        }
+      )
+    );
+
+    const tx =
+      d.chain_tx_id ||
+      d.tx_id ||
+      '';
+
+    $('#hardware-change-result').innerHTML = `
+      <div class="notice success">
+
+        <strong>
+          Hardware change recorded.
+        </strong>
+
+        <br>
+
+        ${esc(oldSpec ?? '—')}
+        →
+        ${esc(d.new_spec || newSpec)}
+
+        <br>
+
+        <span>
+          Current verification stamp:
+          <strong>INVALID</strong>
+        </span>
+
+        ${
+          tx
+            ? `
+              <br>
+              <small>
+                Algorand TX:
+
+                <a
+                  href="https://lora.algokit.io/testnet/transaction/${encodeURIComponent(tx)}"
+                  target="_blank"
+                  rel="noopener">
+
+                  ${esc(tx.slice(0, 16))}… ↗
+
+                </a>
+              </small>
+            `
+            : ''
+        }
+
+      </div>
+    `;
+
+    toast(
+      'Hardware change recorded. Re-verification is now required.'
+    );
+
+    // Refresh authoritative state.
+    await loadMyDevices();
+
+    // Refresh audit history.
+    await loadHardwareLog(deviceId);
+
+    // Reset form fields after successful submission.
+    $('#hardware-component').value = '';
+    $('#hardware-change-type').value = '';
+    $('#hardware-old-spec').value = '';
+    $('#hardware-new-spec').value = '';
+    $('#hardware-new-spec').disabled = false;
+
+  } catch (x) {
+
+    $('#hardware-change-result').innerHTML =
+      `<div class="notice error">
+        ${esc(x.message)}
+       </div>`;
+
+    toast(
+      x.message,
+      'error'
+    );
+
+  } finally {
+
+    setBusy(
+      submitButton,
+      false
+    );
+  }
+}
 // Opens the DPDPA consent modal
 function openListModal(id) {
   const modal = $('#list-modal');
@@ -978,7 +1886,7 @@ async function loadMyDisputes() {
   if (!el) return;
   try {
     const d = envelope(await api('/disputes/my'));
-    const list = d.disputes || d || [];
+    const list = d.my_disputes || d.disputes || d || [];
     el.innerHTML = list.length
       ? list.map(x => `
         <div class="transfer-row">
@@ -1004,11 +1912,11 @@ function wireDisputeModal() {
     const fd = new FormData(e.target);
     setBusy(e.submitter, true, 'Submitting…');
     try {
-      await api('/disputes/raise', {
+      await api('/disputes/report', {
         method: 'POST',
         body: JSON.stringify(Object.fromEntries(fd.entries()))
       });
-      toast('Dispute submitted and permanently attached to device history.');
+      toast('Dispute report submitted. An administrator will review it before the device is frozen on-chain.');
       if (modal) modal.style.display = 'none';
       e.target.reset();
       loadMyDisputes();
@@ -1082,36 +1990,314 @@ async function loadPendingCompletion() {
 
 /* ── ADMIN ───────────────────────────────────────────────────── */
 async function loadAdminAll() {
-  await Promise.all([loadAdminDisputes(), loadAdminApprovals(), loadAdminKyc(), loadAdminDevices(), loadAdminVerifiers()]);
+  await Promise.all([
+    loadAdminAnalytics(),
+    loadAdminDisputes(),
+    loadAdminApprovals(),
+    loadAdminKyc(),
+    loadAdminDevices()
+  ]);
+
+  $('#refresh-analytics')?.addEventListener(
+    'click',
+    loadAdminAnalytics
+  );
+}
+async function loadAdminAnalytics() {
+  const grid = $('#analytics-grid');
+  if (!grid) return;
+
+  try {
+    const d = envelope(await api('/analytics/overview'));
+
+    /* ── API sections ───────────────────────────────────────── */
+    const summary =
+      d.summary || {};
+
+    const lifecycle =
+      d.lifecycle_distribution || {};
+
+    const hardware =
+      d.hardware_activity || {};
+
+    const disputes =
+      d.dispute_statistics || {};
+
+    const recycling =
+      d.recycling_activity || {};
+
+    const onChain =
+      d.on_chain_events || {};
+
+    /* ── Number formatter ───────────────────────────────────── */
+    const numberValue = value => {
+      if (
+        value === null ||
+        value === undefined ||
+        value === ''
+      ) {
+        return '—';
+      }
+
+      const n = Number(value);
+
+      return Number.isFinite(n)
+        ? n.toLocaleString('en-IN')
+        : esc(value);
+    };
+
+    /* ── Recycling rate ─────────────────────────────────────── */
+    const rawRate =
+      summary.recycling_rate_percent ??
+      recycling.formal_recycling_rate_percent ??
+      null;
+
+    let rateText = '—';
+
+    if (
+      rawRate !== null &&
+      rawRate !== undefined &&
+      rawRate !== ''
+    ) {
+      const numericRate = Number(rawRate);
+
+      if (Number.isFinite(numericRate)) {
+        rateText = `${numericRate.toFixed(1)}%`;
+      }
+    }
+
+    /* ── Lifecycle analytics cards ──────────────────────────── */
+
+    $('#analytics-total').textContent =
+      numberValue(
+        summary.total_devices_registered
+      );
+
+    $('#analytics-registered').textContent =
+      numberValue(
+        lifecycle.REGISTERED
+      );
+
+    $('#analytics-verified').textContent =
+      numberValue(
+        lifecycle.VERIFIED
+      );
+
+    $('#analytics-transferred').textContent =
+      numberValue(
+        lifecycle.TRANSFERRED
+      );
+
+    $('#analytics-disputed').textContent =
+      numberValue(
+        lifecycle.DISPUTED
+      );
+
+    $('#analytics-recycled').textContent =
+      numberValue(
+        lifecycle.RECYCLED
+      );
+
+    $('#analytics-exported').textContent =
+      numberValue(
+        lifecycle.EXPORTED
+      );
+
+    $('#analytics-hardware').textContent =
+      numberValue(
+        hardware.total_hardware_changes_declared
+      );
+
+    $('#analytics-rate').textContent =
+      rateText;
+
+    /* ── On-chain event totals ──────────────────────────────── */
+
+    const eventsEl = $('#analytics-events');
+
+    if (!eventsEl) return;
+
+    const eventEntries =
+      Object.entries(onChain);
+
+    if (!eventEntries.length) {
+      eventsEl.innerHTML = empty(
+        'No on-chain events',
+        'No lifecycle event totals were returned by the analytics service.'
+      );
+
+      return;
+    }
+
+    eventsEl.innerHTML =
+      eventEntries
+        .map(([eventType, count]) => `
+          <div class="transfer-row">
+            <div>
+              <span class="mono">
+                ${esc(eventType)}
+              </span>
+
+              <h3 style="margin:4px 0">
+                ${esc(
+                  String(eventType)
+                    .replace(/_/g, ' ')
+                )}
+              </h3>
+
+              <p
+                class="muted"
+                style="font-size:.78rem">
+                Immutable Algorand lifecycle events recorded
+              </p>
+            </div>
+
+            <div class="row-actions">
+              <span class="chip chip-verified">
+                ${numberValue(count)}
+              </span>
+            </div>
+          </div>
+        `)
+        .join('');
+
+  } catch (e) {
+
+    $('#analytics-total').textContent = '—';
+
+    $('#analytics-registered').textContent = '—';
+
+    $('#analytics-verified').textContent = '—';
+
+    $('#analytics-transferred').textContent = '—';
+
+    $('#analytics-disputed').textContent = '—';
+
+    $('#analytics-recycled').textContent = '—';
+
+    $('#analytics-exported').textContent = '—';
+
+    $('#analytics-hardware').textContent = '—';
+
+    $('#analytics-rate').textContent = '—';
+
+    const eventsEl =
+      $('#analytics-events');
+
+    if (eventsEl) {
+      eventsEl.innerHTML = empty(
+        'Analytics unavailable',
+        e.message
+      );
+    }
+  }
 }
 
 async function loadAdminDisputes() {
   const el = $('#disputes-list');
   if (!el) return;
+
   try {
     const d = envelope(await api('/disputes/open'));
     const list = d.disputes || d || [];
-    $('#cnt-disputes').textContent = Array.isArray(list) ? list.length : (d.total ?? '—');
+
+    $('#cnt-disputes').textContent =
+      Array.isArray(list) ? list.length : (d.total ?? '—');
+
     el.innerHTML = list.length
       ? list.map(x => `
         <div class="transfer-row">
           <div>
             <span class="mono">${esc(x.device_id)}</span>
             <h3>${esc(String(x.dispute_type || '').replace(/_/g, ' '))}</h3>
-            <p class="muted" style="font-size:.82rem">${esc(x.description || '')} · Raised by ${esc(x.raised_by || '—')}</p>
+            <p class="muted" style="font-size:.82rem">
+              ${esc(x.description || '')}
+              · Raised by ${esc(x.raised_by || '—')}
+            </p>
           </div>
+
           <div class="row-actions">
             ${chip(x.status)}
-            ${x.status === 'OPEN'
-              ? `<button class="button primary small" data-resolve="${esc(x.dispute_id || x.id)}">Resolve</button>`
-              : ''}
-          </div>
-        </div>`).join('')
-      : empty('No open disputes', 'All disputes resolved.');
-    $$('[data-resolve]', el).forEach(b => b.addEventListener('click', () => adminResolveDispute(b.dataset.resolve)));
-  } catch (e) { el.innerHTML = empty('Error', e.message); }
-}
 
+            ${
+              x.status === 'UNDER_REVIEW'
+                ? `
+                  <button
+                    class="button danger small"
+                    data-freeze="${esc(x.dispute_id || x.id)}">
+                    Freeze on-chain
+                  </button>
+                `
+                : ''
+            }
+
+            ${
+              x.status === 'OPEN'
+                ? `
+                  <button
+                    class="button primary small"
+                    data-resolve="${esc(x.dispute_id || x.id)}">
+                    Resolve
+                  </button>
+                `
+                : ''
+            }
+          </div>
+        </div>
+      `).join('')
+      : empty(
+          'No active disputes',
+          'There are currently no disputes awaiting review or resolution.'
+        );
+
+    $$('[data-freeze]', el).forEach(b =>
+      b.addEventListener('click', () =>
+        adminFreezeDispute(b.dataset.freeze, b)
+      )
+    );
+
+    $$('[data-resolve]', el).forEach(b =>
+      b.addEventListener('click', () =>
+        adminResolveDispute(b.dataset.resolve)
+      )
+    );
+
+  } catch (e) {
+    el.innerHTML = empty('Error', e.message);
+  }
+}
+async function adminFreezeDispute(id, btn) {
+  if (!confirm(
+    'Freeze this device on Algorand? This will write the DISPUTED state to the blockchain.'
+  )) {
+    return;
+  }
+
+  setBusy(btn, true, 'Freezing…');
+
+  try {
+    const d = envelope(
+      await api(`/disputes/${encodeURIComponent(id)}/freeze`, {
+        method: 'POST'
+      })
+    );
+
+    const tx = d.chain_tx_id || d.tx_id || '';
+
+    toast(
+      tx
+        ? `Device frozen on-chain. TX: ${tx.slice(0, 16)}…`
+        : 'Device frozen on-chain.'
+    );
+
+    await loadAdminDisputes();
+
+  } catch (e) {
+    toast(e.message, 'error');
+  } finally {
+    setBusy(btn, false);
+  }
+}
 async function adminResolveDispute(id) {
   const note  = prompt('Resolution note (required):');
   if (!note) return;
@@ -1384,19 +2570,32 @@ function renderEvents(list) {
   if (!Array.isArray(list) || !list.length) return '<p class="muted">No ledger events returned.</p>';
   return `<div class="event-list">${list.map(x => {
     const tx = x.tx_hash || x.tx_id || x.transaction_id || '';
+    
+    // 🚨 THE FIX: Catch EVERY possible date key your backend uses across different database tables
+    const rawTimestamp = 
+      x.timestamp || 
+      x['round-time'] ||     // Standard Algorand Indexer
+      x.round_time || 
+      x.initiated_at ||      // Used by Transfers
+      x.registered_at ||     // Used by Devices
+      x.created_at ||        // Used by Disputes
+      x.uploaded_at ||       // Used by KYC
+      x.last_verified_at ||  // Used by Verification
+      x.verified_at || 
+      x.updated_at ||
+      x.date;
+
     return `<div class="event-row">
       <span class="event-dot"></span>
       <div>
-        <strong>${esc(x.event_type || x.event || 'Event')}</strong>
-        <p>${fmtDate(x.timestamp || x.created_at)}
-          ${tx ? `· <a href="https://lora.algokit.io/testnet/transaction/${encodeURIComponent(tx)}"
+        <strong>${esc(x.event_type || x.event || x.status || 'Event')}</strong>
+        <p>${fmtDate(rawTimestamp)}${tx ? `· <a href="https://lora.algokit.io/testnet/transaction/${encodeURIComponent(tx)}"
                target="_blank" rel="noopener">View on Lora ↗</a>` : ''}
         </p>
       </div>
     </div>`;
   }).join('')}</div>`;
 }
-
 /* ═══════════════════════════════════════════════════════════════
    MARKETPLACE  (WhatsApp contact — your version)
 ══════════════════════════════════════════════════════════════ */
@@ -1405,7 +2604,13 @@ let allListings = [];
 async function initTransfer() {
   const g = $('#marketplace');
   try {
-    const d = envelope(await api('/transfers/marketplace', { auth: false }));
+    // Dynamically choose the route based on login status
+    const path = token() ? '/transfers/marketplace/auth' : '/transfers/marketplace';
+    const options = token() ? {} : { auth: false };
+    
+    // Call the API
+    const d = envelope(await api(path, options));
+    
     allListings = d.listings || (Array.isArray(d) ? d : []);
     renderListings(allListings);
     $('#listing-count').textContent = `${allListings.length} verified listing${allListings.length !== 1 ? 's' : ''}`;
@@ -1643,27 +2848,47 @@ async function initRegisterDevice() {
   const submitKycBtn = $('#btn-new-kyc');
 
   fileInput?.addEventListener('change', () => {
-    const f = fileInput.files[0];
-    if (!f) return;
-    
-    dropzone.classList.add('has-file');
-    $('#dz-filename').textContent = `${f.name} (${(f.size / 1024).toFixed(1)} KB)`;
-    
-    // THE FIX: Lock the button and show the user that cryptography is happening
-    const btnToLock = typeof submitBtn !== 'undefined' ? submitBtn : submitKycBtn;
-    btnToLock.disabled = true; 
-    
-    const preview = $('#hash-preview');
-    if (preview) {
-      preview.style.display = 'block';
-      $('#hash-value').innerHTML = '<span style="color:var(--amber)">Computing SHA-256... ⏳</span>';
-    }
+  const f = fileInput.files[0];
+  if (!f) return;
+  
+  dropzone.classList.add('has-file');
+  $('#dz-filename').textContent =
+    `${f.name} (${(f.size / 1024).toFixed(1)} KB)`;
 
-    hashFile(f).then(h => {
-      $('#hash-value').innerHTML = `<span style="color:var(--green)">🔒 ${h}</span>`;
-      btnToLock.disabled = false;
-    });
+  const btnToLock = submitKycBtn;
+
+  btnToLock.disabled = true; 
+
+  const preview = $('#hash-preview');
+
+  if (preview) {
+    preview.style.display = 'block';
+    $('#hash-value').innerHTML =
+      '<span style="color:var(--amber)">Computing SHA-256... ⏳</span>';
+  }
+
+  hashFile(f).then(h => {
+
+    $('#hash-value').innerHTML =
+      `<span style="color:var(--green)">🔒 ${h}</span>`;
+
+    btnToLock.disabled = false;
+
+  }).catch(err => {
+
+    console.error('SHA-256 generation failed:', err);
+
+    $('#hash-value').innerHTML =
+      '<span style="color:var(--red)">Hash generation failed.</span>';
+
+    btnToLock.disabled = true;
+
+    toast(
+      'Could not generate the document hash.',
+      'error'
+    );
   });
+});
 
   // Drag and drop events
   dropzone?.addEventListener('dragover',  e => { e.preventDefault(); dropzone.classList.add('dragover'); });
