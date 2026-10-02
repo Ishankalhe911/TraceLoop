@@ -285,3 +285,26 @@ def get_all_devices(
             } for d in devices
         ]
     })
+
+@router.get("/verifiers")
+def get_verifiers(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(RequireRole([UserRole.ADMIN]))
+):
+    """All active authorized verifiers — admin oversight."""
+    verifiers = db.query(User).filter(
+        User.role == UserRole.VERIFIABLE,
+        User.status == UserStatus.ACTIVE
+    ).all()
+    return standard_response({
+        "total": len(verifiers),
+        "verifiers": [
+            {
+                "user_id": v.id,
+                "name": v.name,
+                "service_center_id": v.service_center_id,
+                "brand_auth_code": v.brand_auth_code,
+                "approved_at": v.admin_approved_at.isoformat() + "Z" if v.admin_approved_at else None
+            } for v in verifiers
+        ]
+    })
