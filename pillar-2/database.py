@@ -4,29 +4,42 @@ import enum
 from datetime import datetime
 from dotenv import load_dotenv
 from sqlalchemy import (
-    create_engine, Column, String, Boolean, DateTime, Enum, 
-    ForeignKey, BigInteger, Integer, JSON, Numeric, Text
+    create_engine,
+    Column,
+    String,
+    Boolean,
+    DateTime,
+    Enum,
+    ForeignKey,
+    BigInteger,
+    Integer,
+    JSON,
+    Numeric,
+    Text,
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
+
 load_dotenv()
+
 # --- DATABASE CONFIGURATION ---
-# Default to SQLite for immediate zero-setup testing. 
-# To upgrade to PostgreSQL for production, simply change the .env variable to:
+# Default to SQLite for zero-setup local testing.
+# For PostgreSQL, configure DATABASE_URL in the environment, for example:
 # DATABASE_URL=postgresql://user:password@localhost:5432/traceloop
-# Using sqlalchemy.types.JSON automatically maps to JSONB in Postgres, 
-# but safely degrades to TEXT in SQLite, preventing crashes during testing[cite: 15].
+# SQLAlchemy's generic JSON type works with SQLite and PostgreSQL. On PostgreSQL,
+# this declares JSON (not JSONB) unless a PostgreSQL-specific JSONB type is used.
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./traceloop.db")
 
-# SQLite requires specific threading arguments
+# SQLite requires this setting when the application uses multiple threads.
 connect_args = {"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
 engine = create_engine(
-    DATABASE_URL, 
+    DATABASE_URL,
     connect_args=connect_args,
-    pool_pre_ping=True,  # Sends a silent "Hello?" before executing the real query
-    pool_recycle=300     # Proactively refreshes the connection every 5 minutes
+    pool_pre_ping=True,
+    pool_recycle=300,
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+
 
 # --- 1. ENUMS (Trace-Loop State Machines) ---
 class UserRole(str, enum.Enum):
@@ -37,6 +50,7 @@ class UserRole(str, enum.Enum):
     RECYCLER = "RECYCLER"
     ADMIN = "ADMIN"
 
+
 class UserStatus(str, enum.Enum):
     PENDING = "PENDING"
     KYC_IN_PROGRESS = "KYC_IN_PROGRESS"
@@ -44,16 +58,19 @@ class UserStatus(str, enum.Enum):
     SUSPENDED = "SUSPENDED"
     REJECTED = "REJECTED"
 
+
 class DocType(str, enum.Enum):
     PURCHASE_PROOF = "PURCHASE_PROOF"
     BUSINESS_PROOF = "BUSINESS_PROOF"
     BRAND_AUTH = "BRAND_AUTH"
     CPCB_CERT = "CPCB_CERT"
 
+
 class DocStatus(str, enum.Enum):
     PENDING = "PENDING"
     ACCEPTED = "ACCEPTED"
     REJECTED = "REJECTED"
+
 
 class DeviceStatus(str, enum.Enum):
     REGISTERED = "REGISTERED"
@@ -63,16 +80,19 @@ class DeviceStatus(str, enum.Enum):
     RECYCLED = "RECYCLED"
     EXPORTED = "EXPORTED"
 
+
 class ChangeType(str, enum.Enum):
     REPLACED = "REPLACED"
     UPGRADED = "UPGRADED"
     REMOVED = "REMOVED"
     ADDED = "ADDED"
 
+
 class ChainStatus(str, enum.Enum):
     PENDING = "PENDING"
     CONFIRMED = "CONFIRMED"
     FAILED = "FAILED"
+
 
 class VerificationStatus(str, enum.Enum):
     PENDING = "PENDING"
@@ -81,11 +101,13 @@ class VerificationStatus(str, enum.Enum):
     REJECTED = "REJECTED"
     CANCELLED = "CANCELLED"
 
+
 class TransferStatus(str, enum.Enum):
     PENDING = "PENDING"
     IN_PROGRESS = "IN_PROGRESS"
     COMPLETED = "COMPLETED"
     CANCELLED = "CANCELLED"
+
 
 class DisputeType(str, enum.Enum):
     MISREPRESENTED_SPEC = "MISREPRESENTED_SPEC"
@@ -94,11 +116,13 @@ class DisputeType(str, enum.Enum):
     OWNERSHIP_DISPUTE = "OWNERSHIP_DISPUTE"
     OTHER = "OTHER"
 
+
 class DisputeStatus(str, enum.Enum):
     OPEN = "OPEN"
     UNDER_REVIEW = "UNDER_REVIEW"
     RESOLVED = "RESOLVED"
     DISMISSED = "DISMISSED"
+
 
 class AdminActionType(str, enum.Enum):
     APPROVE = "APPROVE"
@@ -107,6 +131,7 @@ class AdminActionType(str, enum.Enum):
     FLAG_CLEAR = "FLAG_CLEAR"
     REVOKE = "REVOKE"
     DOC_REVIEW = "DOC_REVIEW"
+
 
 class RecyclingStatus(str, enum.Enum):
     SENT = "SENT"
@@ -117,36 +142,44 @@ class RecyclingStatus(str, enum.Enum):
 
 # --- 2. AUTH & IDENTITY MODELS (Pillar 2) ---
 class User(Base):
-    """Matches Section 1.3 Users Table[cite: 15]"""
+    """Application user and role-approval state."""
+
     __tablename__ = "users"
-    
+
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     phone = Column(String(15), unique=True, nullable=False)
     role = Column(Enum(UserRole), nullable=False)
     status = Column(Enum(UserStatus), default=UserStatus.PENDING, nullable=False)
     name = Column(String(120), nullable=True)
-    
-    # DPDPA Compliance: Only store the last 4 digits off-chain[cite: 14, 15]
-    aadhaar_last4 = Column(String(4), nullable=True) 
+
+    # DPDPA-conscious storage: only the last four Aadhaar digits are stored here.
+    aadhaar_last4 = Column(String(4), nullable=True)
     aadhaar_verified = Column(Boolean, default=False)
-    
+
     gst_number = Column(String(20), nullable=True)
     cpcb_number = Column(String(40), nullable=True)
     brand_auth_code = Column(String(60), nullable=True)
     service_center_id = Column(String(60), nullable=True)
-    
+
     admin_approved = Column(Boolean, default=False)
     admin_approved_by = Column(String(36), ForeignKey("users.id"), nullable=True)
     admin_approved_at = Column(DateTime(timezone=True), nullable=True)
-    
+
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
-    reward_points = Column(Integer, default=0)   # Running total — shown in dashboard badge
-    dispute_count = Column(Integer, default=0)   # Disputed stamps — verifier oversight
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+    reward_points = Column(Integer, default=0)
+    dispute_count = Column(Integer, default=0)
+
 
 class KYCDocument(Base):
+    """Legacy KYC document table retained for existing route compatibility."""
+
     __tablename__ = "kyc_documents"
-    
+
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
     doc_type = Column(Enum(DocType), nullable=False)
@@ -155,13 +188,14 @@ class KYCDocument(Base):
     status = Column(Enum(DocStatus), default=DocStatus.PENDING, nullable=False)
     rejection_reason = Column(Text, nullable=True)
     reviewed_by = Column(String(36), ForeignKey("users.id"), nullable=True)
-    serial_for_device = Column(String(80), nullable=True) 
+    serial_for_device = Column(String(80), nullable=True)
     reviewed_at = Column(DateTime(timezone=True), nullable=True)
     uploaded_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
+
 class OTPSession(Base):
     __tablename__ = "otp_sessions"
-    
+
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     phone = Column(String(15), nullable=False)
     otp_hash = Column(String(64), nullable=False)
@@ -170,9 +204,10 @@ class OTPSession(Base):
     attempts = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
+
 class JWTSession(Base):
     __tablename__ = "sessions"
-    
+
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
     refresh_token_hash = Column(String(64), nullable=False)
@@ -183,37 +218,44 @@ class JWTSession(Base):
 
 # --- 3. DEVICE INTELLIGENCE MODELS (Pillar 3) ---
 class Device(Base):
-    """Matches Section 2.2 Devices Table"""
+    """Local device mirror; on-chain state remains in Pillar 1."""
+
     __tablename__ = "devices"
 
-    id = Column(String(40), primary_key=True, index=True) 
+    id = Column(String(40), primary_key=True, index=True)
     serial_hash = Column(String(64), unique=True, nullable=False)
     serial_raw = Column(String(80), nullable=False)
     brand_code = Column(String(4), nullable=False)
     brand_name = Column(String(40), nullable=False)
-    
+
     original_config = Column(JSON, nullable=False)
     current_config = Column(JSON, nullable=False)
-    
+
     current_owner_id = Column(String(36), ForeignKey("users.id"), nullable=False)
     current_owner_hash = Column(String(64), nullable=False)
-    
+
     status = Column(Enum(DeviceStatus), default=DeviceStatus.REGISTERED, nullable=False)
     stamp_valid = Column(Boolean, default=False)
-    
-    # --- NEW MARKETPLACE FIELDS ---
+
+    # Marketplace fields
     is_for_sale = Column(Boolean, default=False)
     asking_price = Column(Numeric(10, 2), nullable=True)
     city = Column(String(60), nullable=True)
-    
+
     last_verified_at = Column(DateTime(timezone=True), nullable=True)
     last_verified_by = Column(String(36), ForeignKey("users.id"), nullable=True)
-    
+
     registered_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+
 class DeviceHardwareLog(Base):
     __tablename__ = "device_hardware_log"
-    
+
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     device_id = Column(String(40), ForeignKey("devices.id"), nullable=False)
     component = Column(String(80), nullable=False)
@@ -224,9 +266,10 @@ class DeviceHardwareLog(Base):
     stamp_invalidated = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
+
 class ManufacturerCache(Base):
     __tablename__ = "manufacturer_cache"
-    
+
     serial_hash = Column(String(64), primary_key=True)
     brand_code = Column(String(4), nullable=False)
     original_config = Column(JSON, nullable=False)
@@ -236,19 +279,20 @@ class ManufacturerCache(Base):
 
 # --- 4. LEDGER MIRROR (Pillar 1) ---
 class LedgerEvent(Base):
-    """Matches Section 3.2 Ledger Events. Populated by Subscriber Daemon[cite: 15]."""
+    """Local mirror of ledger events populated by the subscriber daemon."""
+
     __tablename__ = "ledger_events"
 
-    id = Column(String(36), primary_key=True) # Maps to on-chain UUID
+    id = Column(String(36), primary_key=True)  # Maps to the on-chain event UUID.
     device_id = Column(String(40), ForeignKey("devices.id"), nullable=False)
     event_type = Column(String(20), nullable=False)
     actor_id = Column(String(36), ForeignKey("users.id"), nullable=True)
     actor_type = Column(String(20), nullable=False)
-    
+
     tx_hash = Column(String(80), nullable=True, index=True)
     block_number = Column(BigInteger, nullable=True)
     chain_status = Column(Enum(ChainStatus), default=ChainStatus.PENDING, nullable=False)
-    
+
     metadata_ = Column("metadata", JSON, nullable=True)
     timestamp = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
     confirmed_at = Column(DateTime(timezone=True), nullable=True)
@@ -256,28 +300,34 @@ class LedgerEvent(Base):
 
 # --- 5. WORKFLOW MODELS (Verification, Transfer, Dispute) ---
 class VerificationRequest(Base):
-    """Matches Section 4.3 Verifications[cite: 15]"""
+    """Verifier workflow for a device."""
+
     __tablename__ = "verifications"
-    
+
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     device_id = Column(String(40), ForeignKey("devices.id"), nullable=False)
     requested_by = Column(String(36), ForeignKey("users.id"), nullable=False)
     verifier_id = Column(String(36), ForeignKey("users.id"), nullable=True)
-    
+
     status = Column(Enum(VerificationStatus), default=VerificationStatus.PENDING, nullable=False)
     config_snapshot = Column(JSON, nullable=True)
     manufacturer_match = Column(Boolean, nullable=True)
     rejection_reason = Column(Text, nullable=True)
-    
+
     stamped_at = Column(DateTime(timezone=True), nullable=True)
     ledger_event_id = Column(String(36), ForeignKey("ledger_events.id"), nullable=True)
-    
+
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
 
 class VerifierReputation(Base):
     __tablename__ = "verifier_reputation"
-    
+
     verifier_id = Column(String(36), ForeignKey("users.id"), primary_key=True)
     total_stamps = Column(Integer, default=0)
     disputed_stamps = Column(Integer, default=0)
@@ -286,51 +336,58 @@ class VerifierReputation(Base):
     flagged = Column(Boolean, default=False)
     last_calculated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
+
 class Transfer(Base):
-    """Matches Section 5.4 Transfers[cite: 15]"""
+    """Device transfer workflow."""
+
     __tablename__ = "transfers"
-    
+
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     device_id = Column(String(40), ForeignKey("devices.id"), nullable=False)
     from_user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
     to_user_id = Column(String(36), ForeignKey("users.id"), nullable=True)
     verifier_id = Column(String(36), ForeignKey("users.id"), nullable=True)
-    
+
     status = Column(Enum(TransferStatus), default=TransferStatus.PENDING, nullable=False)
-    
+
     stamp_event_id = Column(String(36), ForeignKey("ledger_events.id"), nullable=True)
     transfer_event_id = Column(String(36), ForeignKey("ledger_events.id"), nullable=True)
-    
+
     velocity_flagged = Column(Boolean, default=False)
     count_flagged = Column(Boolean, default=False)
-    
+
     initiated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     completed_at = Column(DateTime(timezone=True), nullable=True)
 
+
 class Dispute(Base):
-    """Matches Section 6.2 Disputes[cite: 15]"""
+    """Device dispute workflow."""
+
     __tablename__ = "disputes"
-    
+
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     device_id = Column(String(40), ForeignKey("devices.id"), nullable=False)
     raised_by = Column(String(36), ForeignKey("users.id"), nullable=False)
     raised_by_role = Column(Enum(UserRole), nullable=False)
-    
+
     dispute_type = Column(Enum(DisputeType), nullable=False)
     description = Column(Text, nullable=False)
     evidence_path = Column(Text, nullable=True)
-    
+
     status = Column(Enum(DisputeStatus), default=DisputeStatus.OPEN, nullable=False)
     resolution_note = Column(Text, nullable=True)
     resolved_by = Column(String(36), ForeignKey("users.id"), nullable=True)
     resolved_at = Column(DateTime(timezone=True), nullable=True)
-    
+
     ledger_event_id = Column(String(36), ForeignKey("ledger_events.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
+
 class AdminAction(Base):
+    """Audit trail for administrative actions."""
+
     __tablename__ = "admin_actions"
-    
+
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     admin_id = Column(String(36), ForeignKey("users.id"), nullable=False)
     action_type = Column(Enum(AdminActionType), nullable=False)
@@ -339,20 +396,22 @@ class AdminAction(Base):
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
+
 # --- 6. ESG INCENTIVES (Custom Additions) ---
 class RewardPoint(Base):
     __tablename__ = "reward_points"
-    
+
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
     points = Column(Integer, nullable=False)
     action = Column(String(60), nullable=False)
     device_id = Column(String(40), nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    
+
+
 class RecyclingRecord(Base):
     __tablename__ = "recycling_records"
-    
+
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     certificate_id = Column(String(60), unique=True, nullable=True)
     device_id = Column(String(40), ForeignKey("devices.id"), nullable=False)
@@ -360,6 +419,89 @@ class RecyclingRecord(Base):
     recycling_status = Column(Enum(RecyclingStatus), default=RecyclingStatus.SENT, nullable=False)
     received_date = Column(DateTime(timezone=True), nullable=True)
     completion_date = Column(DateTime(timezone=True), nullable=True)
+
+
+# --- 7. PHASE 1 PRIVATE EVIDENCE MODELS (Pillar 2) ---
+class EvidenceType(str, enum.Enum):
+    IDENTITY_PROOF = "IDENTITY_PROOF"  # Buyer identity evidence; optionality is enforced by the workflow.
+    RECYCLER_AUTHORIZATION = "RECYCLER_AUTHORIZATION"  # CPCB/SPCB facility authorization.
+    BRAND_AUTHORIZATION = "BRAND_AUTHORIZATION"  # OEM/authorized service-center letter.
+    BUSINESS_REGISTRATION = "BUSINESS_REGISTRATION"  # GST/trade license for resellers.
+    PURCHASE_PROOF = "PURCHASE_PROOF"  # Device-scoped tax invoice/receipt.
+    # Keep disabled in upload routes until device/workflow scope is enforced.
+    RECYCLING_RECOVERY_PROOF = "RECYCLING_RECOVERY_PROOF"
+
+
+class EvidenceSubjectType(str, enum.Enum):
+    USER_ROLE_CREDENTIAL = "USER_ROLE_CREDENTIAL"  # Scoped to a user/business account.
+    DEVICE_CLAIM = "DEVICE_CLAIM"  # Scoped to a specific hardware serial/device claim.
+
+
+class EvidenceVerificationStatus(str, enum.Enum):
+    PENDING = "PENDING"
+    VERIFIED = "VERIFIED"
+    REJECTED = "REJECTED"
+    EXPIRED = "EXPIRED"
+    REVOKED = "REVOKED"
+
+
+class EvidenceRecord(Base):
+    """Private off-chain evidence metadata; file bytes stay in private storage.
+
+    API authorization must protect reviewer metadata and storage references.
+    These columns are not encrypted or access-controlled merely by being in this model.
+    """
+
+    __tablename__ = "evidence_records"
+
+    # 32 random hex characters plus the "EV-" prefix (35 chars total), fitting String(36).
+    # This materially lowers collision risk compared with the earlier 12-hex-character ID.
+    id = Column(
+        String(36),
+        primary_key=True,
+        default=lambda: f"EV-{uuid.uuid4().hex.upper()}",
+    )
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    evidence_type = Column(Enum(EvidenceType), nullable=False)
+    subject_type = Column(Enum(EvidenceSubjectType), nullable=False)
+    # user.id for role credentials; canonicalized serial/device claim for device-scoped evidence.
+    subject_id = Column(String(80), nullable=False, index=True)
+
+    # Reviewer-only claims. Do not include these fields in public passport/API responses.
+    claimed_document_number = Column(String(80), nullable=True)
+    claimed_issuer = Column(String(120), nullable=True)
+    issued_at = Column(DateTime(timezone=True), nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Private file locator and server-computed integrity digest.
+    # The upload route must compute file_sha256 from the actual uploaded bytes.
+    file_reference = Column(Text, nullable=False)
+    original_filename = Column(String(255), nullable=False)
+    mime_type = Column(String(80), nullable=False)
+    file_size_bytes = Column(Integer, nullable=False)
+    file_sha256 = Column(String(64), nullable=False, index=True)
+
+    verification_status = Column(
+        Enum(EvidenceVerificationStatus),
+        default=EvidenceVerificationStatus.PENDING,
+        nullable=False,
+    )
+    reviewed_by = Column(String(36), ForeignKey("users.id"), nullable=True)
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
+    review_notes = Column(Text, nullable=True)
+
+    # Optional bridge to legacy KYC data. Identity evidence need not have a legacy KYC row.
+    legacy_kyc_doc_id = Column(
+        String(36),
+        ForeignKey("kyc_documents.id"),
+        nullable=True,
+        index=True,
+    )
+
+    # Reserved for a future, separately designed anchoring phase. Phase 1 does not write to chain.
+    onchain_anchor_txid = Column(String(80), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
 
 def get_db():
     db = SessionLocal()

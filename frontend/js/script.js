@@ -60,13 +60,38 @@ function setBusy(b, busy, label = 'Working…') {
 
 /* ── API helper ──────────────────────────────────────────────── */
 async function api(path, options = {}) {
-  const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
-  if (token() && options.auth !== false) headers.Authorization = `Bearer ${token()}`;
+  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
 
+  const buildHeaders = (accessToken = token()) => {
+    const out = {};
+    if (!isFormData) out['Content-Type'] = 'application/json';
+
+    for (const [key, value] of Object.entries(options.headers || {})) {
+      if (isFormData && key.toLowerCase() === 'content-type') continue;
+      out[key] = value;
+    }
+
+    // The browser must set multipart/form-data with its generated boundary.
+    if (isFormData) {
+      for (const key of Object.keys(out)) {
+        if (key.toLowerCase() === 'content-type') delete out[key];
+      }
+    }
+
+    if (accessToken && options.auth !== false) out.Authorization = `Bearer ${accessToken}`;
+    else {
+      for (const key of Object.keys(out)) {
+        if (key.toLowerCase() === 'authorization') delete out[key];
+      }
+    }
+    return out;
+  };
+
+  let headers = buildHeaders();
   let r = await fetch(`${API_BASE}${path}`, { ...options, headers });
 
-  // Auto-refresh on 401
-  if (r.status === 401 && localStorage.getItem(REFRESH_KEY)) {
+  // Auto-refresh on 401, preserving JSON vs multipart headers on the retry.
+  if (r.status === 401 && options.auth !== false && localStorage.getItem(REFRESH_KEY)) {
     const rr = await fetch(`${API_BASE}/api/v1/token/refresh`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -74,10 +99,12 @@ async function api(path, options = {}) {
     });
     if (rr.ok) {
       const fresh = envelope(await rr.json());
-      localStorage.setItem(TOKEN_KEY, fresh.access_token);
-      if (fresh.refresh_token) localStorage.setItem(REFRESH_KEY, fresh.refresh_token);
-      headers.Authorization = `Bearer ${fresh.access_token}`;
-      r = await fetch(`${API_BASE}${path}`, { ...options, headers });
+      if (fresh.access_token) {
+        localStorage.setItem(TOKEN_KEY, fresh.access_token);
+        if (fresh.refresh_token) localStorage.setItem(REFRESH_KEY, fresh.refresh_token);
+        headers = buildHeaders(fresh.access_token);
+        r = await fetch(`${API_BASE}${path}`, { ...options, headers });
+      }
     }
   }
 
@@ -87,6 +114,14 @@ async function api(path, options = {}) {
     throw new Error(errorMsg(body));
   }
   return body;
+}
+
+function absoluteApiUrl(path) {
+  try {
+    return new URL(path, `${API_BASE.replace(/\/+$/, '')}/`).toString();
+  } catch {
+    return `${API_BASE.replace(/\/+$/, '')}/${String(path || '').replace(/^\/+/, '')}`;
+  }
 }
 
 function envelope(p) { return p?.data !== undefined ? p.data : p; }
@@ -143,6 +178,33 @@ async function hashFile(file) {
   const bytes = await file.arrayBuffer();
   const hash  = await crypto.subtle.digest('SHA-256', bytes);
   return [...new Uint8Array(hash)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+
+const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+
+function appendIfValue(formData, key, value) {
+  if (value !== null && value !== undefined && String(value).trim() !== '') {
+    formData.append(key, String(value).trim());
+  }
+}
+
+async function uploadEvidence({ docType, file, serial, claimedDocumentNumber, claimedIssuer, issuedAt, expiresAt }) {
+  if (!(file instanceof File)) throw new Error('Please select a document file.');
+  if (file.size <= 0) throw new Error('The selected file is empty.');
+  if (file.size > MAX_UPLOAD_BYTES) throw new Error('The maximum document size is 5 MB.');
+
+  const form = new FormData();
+  form.append('doc_type', docType);
+  form.append('file', file, file.name);
+  appendIfValue(form, 'serial_for_device', serial);
+  appendIfValue(form, 'claimed_document_number', claimedDocumentNumber);
+  appendIfValue(form, 'claimed_issuer', claimedIssuer);
+  appendIfValue(form, 'issued_at', issuedAt);
+  appendIfValue(form, 'expires_at', expiresAt);
+
+  // The server computes the authoritative SHA-256 from the uploaded bytes.
+  return envelope(await api('/api/v1/evidence/upload', { method: 'POST', body: form }));
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -283,12 +345,16 @@ async function initLogin() {
    REGISTER  (fixed — matches backend exactly)
 ══════════════════════════════════════════════════════════════ */
 
-// Maps role → KYC document metadata
+// Maps role → KYC document metadata.
+// Certificate expiry collection is deliberately not enabled in this phase; add it back only
+// with the complete, agreed backend/admin expiry policy.
 const KYC_META = {
   FIRST_BUYER: {
-    doc_type:   'PURCHASE_PROOF',
-    label:      'Purchase proof',
+    doc_type: 'PURCHASE_PROOF',
+    label: 'Purchase proof',
     needSerial: true,
+    optional: false,
+    captureDocumentMetadata: true,
     notice: `
       <div style="background:var(--amber-bg);border:1px solid var(--amber);border-radius:var(--radius);padding:14px 16px;font-size:.875rem;color:#92400e;margin-bottom:20px">
         <strong style="display:block;margin-bottom:8px">📄 What to upload</strong>
@@ -296,56 +362,59 @@ const KYC_META = {
         <ul style="margin:8px 0 0 16px">
           <li>The document must clearly show the laptop's <strong>serial number</strong>.</li>
           <li>Enter that exact serial number in the field below.</li>
-          <li>Admin verifies your identity <em>and</em> the serial together — both must match.</li>
-          <li>Device registration is only unlocked after admin approves this document.</li>
+          <li>The admin must approve proof matched to this exact serial before device registration.</li>
         </ul>
       </div>`,
-    activation: 'Admin reviews your purchase proof + serial. Activated on approval.',
+    activation: 'Admin reviews your purchase proof and serial. Device registration unlocks after approval.',
   },
   BUYER: {
-    doc_type:   'BUSINESS_PROOF',
-    label:      'Identity proof',
+    doc_type: 'IDENTITY_PROOF',
+    label: 'Identity proof',
     needSerial: false,
-    notice: `<div class="notice info" style="margin-bottom:20px">Upload any government-issued ID — Aadhaar, PAN card, passport, or voter ID.</div>`,
-    activation: 'Account activated by admin after document review.',
+    optional: false,
+    captureDocumentMetadata: false,
+    notice: `<div class="notice info" style="margin-bottom:20px">Upload an identity document for admin review. Do not type an Aadhaar or other government ID number into TraceLoop; only upload the document needed for review.</div>`,
+    activation: 'Your account remains pending until an admin reviews and accepts your identity proof.',
   },
   RESELLER: {
-    doc_type:   'BUSINESS_PROOF',
-    label:      'Business proof',
-    needSerial: true,
+    doc_type: 'BUSINESS_REGISTRATION',
+    label: 'Business proof',
+    needSerial: false,
+    optional: false,
+    captureDocumentMetadata: true,
     notice: `
       <div style="background:var(--amber-bg);border:1px solid var(--amber);border-radius:var(--radius);padding:14px 16px;font-size:.875rem;color:#92400e;margin-bottom:20px">
         <strong style="display:block;margin-bottom:8px">📄 What to upload</strong>
-        Trade license or shop establishment certificate.
-        <ul style="margin:8px 0 0 16px">
-          <li>Your GST number must match what you entered during registration.</li>
-          <li>Provide a device serial number if you're registering an initial device.</li>
-        </ul>
+        Trade license, GST registration certificate, or shop-establishment proof. The business credential belongs to your account, not to an individual device.
       </div>`,
-    activation: 'Account activated by admin after GST + business proof verification.',
+    activation: 'Admin reviews your business registration proof. The account activates after acceptance.',
   },
   VERIFIABLE: {
-    doc_type:   'BRAND_AUTH',
-    label:      'Brand authorization letter',
+    doc_type: 'BRAND_AUTHORIZATION',
+    label: 'Brand authorization letter',
     needSerial: false,
-    notice: `<div class="notice info" style="margin-bottom:20px">Upload the manufacturer authorization letter from Dell, HP, Lenovo, Asus, etc. Must be current and signed by the brand.</div>`,
-    activation: '⚠ Manual admin activation — in-person onboarding by the Trace-Loop team.',
+    optional: false,
+    captureDocumentMetadata: true,
+    notice: `<div class="notice info" style="margin-bottom:20px">Upload a manufacturer/OEM authorization letter or service-centre authorization. The admin will inspect the actual file before accepting it.</div>`,
+    activation: 'Admin reviews your brand/service-centre authorization. The account activates after acceptance.',
   },
   RECYCLER: {
-    doc_type:   'CPCB_CERT',
-    label:      'CPCB registration certificate',
+    doc_type: 'RECYCLER_AUTHORIZATION',
+    label: 'CPCB / SPCB recycler authorization',
     needSerial: false,
-    notice: `<div class="notice info" style="margin-bottom:20px">Upload your CPCB e-waste recycler registration certificate. The CPCB number must match what you entered during registration.</div>`,
-    activation: '⚠ Manual admin activation. CPCB certificate is mandatory.',
+    optional: false,
+    captureDocumentMetadata: true,
+    notice: `<div class="notice info" style="margin-bottom:20px">Upload your CPCB/SPCB e-waste recycler authorization certificate. The admin will inspect the actual file before accepting it. Certificate time-bound rules will be added in a later aligned change.</div>`,
+    activation: 'Admin reviews the recycler authorization. The account activates after acceptance.',
   },
 };
 
 const ROLE_ACTIVATION = {
   FIRST_BUYER: 'Admin reviews your purchase proof and activates your account.',
-  BUYER:       'Admin reviews your ID and activates your account.',
-  RESELLER:    'Admin verifies your GST + business proof. Manual activation.',
-  VERIFIABLE:  '⚠ Manual admin activation only. In-person onboarding required.',
-  RECYCLER:    '⚠ Manual admin activation only. CPCB number is verified.',
+  BUYER:       'Admin reviews your identity proof before activating your account.',
+  RESELLER:    'Admin reviews your business registration proof. Account activates after acceptance.',
+  VERIFIABLE:  'Admin reviews the brand/service-centre authorization. Account activates after acceptance.',
+  RECYCLER:    'Admin reviews the recycler authorization. Account activates after acceptance.',
 };
 
 function initRegister() {
@@ -449,99 +518,103 @@ function initRegister() {
 
   // ── Step 3 → file dropzone wiring ───────────────────────────
   const fileInput = $('#kyc-file');
-  const dropzone  = $('#kyc-dropzone');
+  const dropzone = $('#kyc-dropzone');
   const submitBtn = $('#btn-kyc-submit');
 
   fileInput?.addEventListener('change', async () => {
-  const f = fileInput.files[0];
-  if (!f) return;
-
-  dropzone.classList.add('has-file');
-
-  $('#dz-filename').textContent =
-    `${f.name} (${(f.size / 1024).toFixed(1)} KB)`;
-
-  const btnToLock = submitBtn;
-
-  btnToLock.disabled = true;
-
-  const preview = $('#hash-preview');
-
-  if (preview) {
-    preview.style.display = 'block';
-
-    $('#hash-value').innerHTML =
-      '<span style="color:var(--amber)">Computing SHA-256... ⏳</span>';
-  }
-
-  try {
-    const h = await hashFile(f);
-
-    $('#hash-value').innerHTML =
-      `<span style="color:var(--green)">🔒 ${h}</span>`;
-
-    btnToLock.disabled = false;
-
-  } catch (err) {
-
-    $('#hash-value').innerHTML =
-      `<span style="color:var(--red)">
-        Unable to generate SHA-256 hash.
-       </span>`;
-
-    btnToLock.disabled = true;
-
-    toast(
-      'Could not generate the document hash.',
-      'error'
-    );
-  }
-});
-  // Drag-and-drop
-  dropzone?.addEventListener('dragover',  e => { e.preventDefault(); dropzone.classList.add('dragover'); });
-  dropzone?.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
-  dropzone?.addEventListener('drop', e => {
-    e.preventDefault(); dropzone.classList.remove('dragover');
-    const f = e.dataTransfer.files[0];
-    if (f) { fileInput.files = e.dataTransfer.files; fileInput.dispatchEvent(new Event('change')); }
-  });
-
-  // ── Step 3 → KYC submit ─────────────────────────────────────
-  $('#kyc-form')?.addEventListener('submit', async e => {
-    e.preventDefault();
-    const file    = fileInput?.files[0];
-    const serial  = $('#kyc-serial')?.value.trim().toUpperCase() || null;
-    const docType = $('#kyc-doc-type').value;
-    const meta    = KYC_META[selectedRole || user()?.role];
-
-    if (!file) { toast('Please select a document to upload.', 'error'); return; }
-    if (meta?.needSerial && !serial) {
-      toast('Serial number is required for your role — check your purchase invoice.', 'error'); return;
+    const f = fileInput.files?.[0];
+    if (!f) {
+      submitBtn.disabled = true;
+      dropzone?.classList.remove('has-file');
+      if ($('#hash-preview')) $('#hash-preview').style.display = 'none';
+      return;
+    }
+    if (f.size <= 0 || f.size > MAX_UPLOAD_BYTES) {
+      fileInput.value = '';
+      submitBtn.disabled = true;
+      dropzone?.classList.remove('has-file');
+      toast(f.size > MAX_UPLOAD_BYTES ? 'The maximum document size is 5 MB.' : 'The selected file is empty.', 'error');
+      return;
     }
 
-    setBusy(e.submitter, true, 'Computing hash and submitting…');
+    dropzone?.classList.add('has-file');
+    $('#dz-filename').textContent = `${f.name} (${(f.size / 1024).toFixed(1)} KB)`;
+    submitBtn.disabled = true;
+    const preview = $('#hash-preview');
+    if (preview) {
+      preview.style.display = 'block';
+      preview.querySelector('strong')?.replaceChildren(document.createTextNode('Local SHA-256 preview (server recomputes the authoritative hash)'));
+      $('#hash-value').textContent = 'Computing…';
+    }
+
     try {
-      const fileHash = await hashFile(file);
-      const payload  = { doc_type: docType, file_hash: fileHash };
-      if (serial) payload.serial_for_device = serial;
+      const digest = await hashFile(f);
+      $('#hash-value').textContent = digest;
+      submitBtn.disabled = false;
+    } catch (err) {
+      console.error('Local SHA-256 preview failed:', err);
+      $('#hash-value').textContent = 'Preview unavailable; the server will verify uploaded bytes.';
+      // Local preview is not an authorization control. The server validates the actual file.
+      submitBtn.disabled = false;
+    }
+  });
 
-      const d = envelope(await api('/api/v1/kyc/upload', {
-        method: 'POST', body: JSON.stringify(payload)
-      }));
+  dropzone?.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragover'); });
+  dropzone?.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+  dropzone?.addEventListener('drop', e => {
+    e.preventDefault();
+    dropzone.classList.remove('dragover');
+    if (e.dataTransfer?.files?.length && fileInput) {
+      fileInput.files = e.dataTransfer.files;
+      fileInput.dispatchEvent(new Event('change'));
+    }
+  });
 
-      $('#kyc-result').innerHTML = `<div class="notice success">
-        <strong>Document submitted for admin review.</strong><br>
-        Document ID: <span class="mono">${esc(d.doc_id || '—')}</span><br>
+  // ── Step 3 → actual multipart evidence upload ────────────────
+  $('#kyc-form')?.addEventListener('submit', async e => {
+    e.preventDefault();
+    const file = fileInput?.files?.[0];
+    const serial = normalizeClientSerial($('#kyc-serial')?.value);
+    const docType = $('#kyc-doc-type')?.value;
+    const role = selectedRole || user()?.role;
+    const meta = KYC_META[role];
+
+    if (!file) { toast('Please select a document to upload.', 'error'); return; }
+    if (meta?.needSerial && !serial) { toast('Serial number is required and must match the invoice.', 'error'); return; }
+
+    setBusy(e.submitter || submitBtn, true, 'Uploading actual document…');
+    try {
+      const d = await uploadEvidence({
+        docType,
+        file,
+        serial,
+        claimedDocumentNumber: $('#kyc-claimed-number')?.value,
+        claimedIssuer: $('#kyc-claimed-issuer')?.value,
+        issuedAt: $('#kyc-issued-at')?.value,
+        expiresAt: $('#kyc-expires-at')?.value,
+      });
+
+      const result = $('#kyc-result');
+      result.innerHTML = `<div class="notice success">
+        <strong>Document uploaded for admin review.</strong><br>
+        Evidence ID: <span class="mono">${esc(d.evidence_id || d.doc_id || '—')}</span><br>
         ${d.serial_for_device ? `Serial on file: <span class="mono">${esc(d.serial_for_device)}</span><br>` : ''}
-        <small>${esc(d.message || '')}</small>
+        <small>The server calculated the authoritative SHA-256. An administrator must inspect the actual file before approving the evidence.</small>
       </div>`;
       $('#kyc-done').style.display = 'block';
-      toast('KYC document submitted.');
+      toast('Evidence uploaded and queued for review.');
     } catch (x) {
       $('#kyc-result').innerHTML = `<div class="notice error">${esc(x.message)}</div>`;
       toast(x.message, 'error');
-    } finally { setBusy(e.submitter, false); }
+    } finally {
+      setBusy(e.submitter || submitBtn, false);
+    }
   });
+}
+
+function normalizeClientSerial(value) {
+  const cleaned = String(value || '').trim().toUpperCase().replace(/[^A-Z0-9-]/g, '');
+  return cleaned || null;
 }
 
 function goStep(n) {
@@ -557,30 +630,174 @@ function goStep(n) {
 }
 
 function setupKycStep(role) {
-  const meta = KYC_META[role] || KYC_META['BUYER'];
-  $('#kyc-doc-type').value = meta.doc_type;
+  const meta = KYC_META[role] || KYC_META.BUYER;
+  const typeInput = $('#kyc-doc-type');
+  if (typeInput) typeInput.value = meta.doc_type;
+
   const box = $('#kyc-role-box');
-  if (box) box.innerHTML = `
-    <div style="margin-bottom:12px">
-      <strong style="font-family:'Space Grotesk',sans-serif">${esc(meta.label)}</strong>
-      <p class="muted" style="font-size:.82rem;margin-top:2px">${esc(role)} account · ${esc(meta.activation || '')}</p>
-    </div>
-    ${meta.notice}
-  `;
-  const sw = $('#kyc-serial-wrap');
-  if (sw) sw.style.display = meta.needSerial ? 'block' : 'none';
+  if (box) {
+    const metadataFields = meta.captureDocumentMetadata ? `
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:16px 0 20px">
+        <label>Document / certificate number <span class="muted">(optional)</span>
+          <input id="kyc-claimed-number" maxlength="80" autocomplete="off" placeholder="As printed on document">
+        </label>
+        <label>Issuing authority <span class="muted">(optional)</span>
+          <input id="kyc-claimed-issuer" maxlength="120" autocomplete="off" placeholder="e.g. CPCB, SPCB, OEM">
+        </label>
+        <label>Issue date <span class="muted">(optional)</span>
+          <input id="kyc-issued-at" type="date">
+        </label>
+        ${meta.needsExpiry ? `<label>Certificate expiry date <span class="req">*</span>
+          <input id="kyc-expires-at" type="date" required>
+          <small class="muted">This is your claimed date. The admin must confirm it from the inspected certificate.</small>
+        </label>` : ''}
+      </div>` : (meta.needsExpiry ? `<label>Certificate expiry date <span class="req">*</span><input id="kyc-expires-at" type="date" required></label>` : '');
+
+    box.innerHTML = `
+      <div style="margin-bottom:12px">
+        <strong style="font-family:'Space Grotesk',sans-serif">${esc(meta.label)}</strong>
+        <p class="muted" style="font-size:.82rem;margin-top:2px">${esc(role)} account · ${esc(meta.activation || '')}</p>
+      </div>
+      ${meta.notice || ''}
+      ${metadataFields}
+    `;
+  }
+
+  const serialWrap = $('#kyc-serial-wrap');
+  if (serialWrap) serialWrap.style.display = meta.needSerial ? 'block' : 'none';
+  const serialInput = $('#kyc-serial');
+  if (serialInput) {
+    serialInput.required = !!meta.needSerial;
+    if (!meta.needSerial) serialInput.value = '';
+  }
+
+  // Every applicable role must submit its configured evidence; there is no buyer skip path.
+  $('#kyc-skip-button')?.remove();
+  const stepHeading = $('#step-3 h2');
+  if (stepHeading) stepHeading.textContent = 'Submit KYC document';
 }
 
 /* ═══════════════════════════════════════════════════════════════
    DASHBOARD
-══════════════════════════════════════════════════════════════ */
+═══════════════════════════════════════════════════════════════ */
+function renderCredentialUploadPanel(root, me) {
+  const uploadTypes = {
+    FIRST_BUYER: { docType: 'PURCHASE_PROOF', label: 'Submit / resubmit purchase proof', requiresSerial: true },
+    BUYER: { docType: 'IDENTITY_PROOF', label: 'Submit / resubmit identity proof', requiresSerial: false },
+    RESELLER: { docType: 'BUSINESS_REGISTRATION', label: 'Renew / replace business registration', requiresSerial: false },
+    VERIFIABLE: { docType: 'BRAND_AUTHORIZATION', label: 'Renew / replace brand authorization', requiresSerial: false },
+    RECYCLER: { docType: 'RECYCLER_AUTHORIZATION', label: 'Renew / replace recycler authorization', requiresSerial: false },
+  };
+  const cfg = uploadTypes[me?.role];
+  if (!cfg || !root) return;
+  // Active first buyers use the device-registration flow for additional device invoices.
+  // The dashboard upload panel is for KYC_IN_PROGRESS users resubmitting their first proof.
+  if (['FIRST_BUYER', 'BUYER'].includes(me.role) && me.status === 'ACTIVE') return;
+
+  const panel = document.createElement('section');
+  panel.className = 'panel';
+  panel.id = 'credential-renewal-panel';
+  panel.innerHTML = `
+    <div class="panel-head">
+      <div><span class="eyebrow">Evidence management</span><h2>${esc(cfg.label)}</h2></div>
+    </div>
+    <p class="muted" style="margin-bottom:16px">Upload the required or corrected evidence here. An admin must review the actual file before it can satisfy the account's verification requirement.</p>
+    <form id="credential-renewal-form" class="form-grid" enctype="multipart/form-data">
+      ${cfg.requiresSerial ? `<label>Device serial number <span class="req">*</span><input name="serial_for_device" maxlength="80" required placeholder="Exactly as printed on the invoice"></label>` : ''}
+      <label>Document / certificate number <span class="muted">(optional)</span>
+        <input name="claimed_document_number" maxlength="80" autocomplete="off" placeholder="As printed on the document">
+      </label>
+      <label>Issuing authority <span class="muted">(optional)</span>
+        <input name="claimed_issuer" maxlength="120" autocomplete="off" placeholder="e.g. CPCB, SPCB, OEM">
+      </label>
+      <label>Issue date <span class="muted">(optional)</span>
+        <input name="issued_at" type="date">
+      </label>
+      <label style="grid-column:1/-1">Actual document file <span class="req">*</span>
+        <input id="credential-renewal-file" name="file" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" required>
+        <small class="muted">PDF, JPG, PNG or WebP · maximum 5 MB.</small>
+      </label>
+      <div style="grid-column:1/-1;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <button class="button primary" type="submit" id="credential-renewal-submit" disabled>Upload for admin review</button>
+        <span id="credential-renewal-file-name" class="muted" aria-live="polite"></span>
+      </div>
+    </form>
+    <div id="credential-renewal-result" style="margin-top:14px"></div>
+  `;
+  root.prepend(panel);
+
+  const fileInput = $('#credential-renewal-file', panel);
+  const submit = $('#credential-renewal-submit', panel);
+  const fileName = $('#credential-renewal-file-name', panel);
+  fileInput?.addEventListener('change', () => {
+    const file = fileInput.files?.[0];
+    const valid = !!file && file.size > 0 && file.size <= MAX_UPLOAD_BYTES;
+    submit.disabled = !valid;
+    fileName.textContent = file ? `${file.name} (${(file.size / 1024).toFixed(1)} KB)` : '';
+    if (file && !valid) {
+      fileInput.value = '';
+      fileName.textContent = '';
+      toast(file.size > MAX_UPLOAD_BYTES ? 'The maximum document size is 5 MB.' : 'The selected file is empty.', 'error');
+    }
+  });
+
+  $('#credential-renewal-form', panel)?.addEventListener('submit', async e => {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const file = fileInput?.files?.[0];
+    const values = new FormData(form);
+    if (!file) { toast('Select the actual document file.', 'error'); return; }
+    if (cfg.requiresSerial && !normalizeClientSerial(values.get('serial_for_device'))) { toast('Enter the device serial number exactly as shown on the purchase proof.', 'error'); return; }
+
+    setBusy(e.submitter || submit, true, 'Uploading…');
+    try {
+      const d = await uploadEvidence({
+        docType: cfg.docType,
+        file,
+        serial: normalizeClientSerial(values.get('serial_for_device')),
+        claimedDocumentNumber: values.get('claimed_document_number'),
+        claimedIssuer: values.get('claimed_issuer'),
+        issuedAt: values.get('issued_at'),
+        expiresAt: values.get('expires_at'),
+      });
+      $('#credential-renewal-result', panel).innerHTML = `<div class="notice success">
+        <strong>Evidence submitted for review.</strong><br>
+        Evidence ID: <span class="mono">${esc(d.evidence_id || d.doc_id || '—')}</span><br>
+        Status: ${chip(d.status || 'PENDING')}<br>
+      </div>`;
+      form.reset();
+      submit.disabled = true;
+      fileName.textContent = '';
+      toast('Evidence uploaded for admin review.');
+      try {
+        const freshMe = envelope(await api('/api/v1/me'));
+        localStorage.setItem(USER_KEY, JSON.stringify(freshMe));
+        $('#account-status').innerHTML = chip(freshMe.status);
+      } catch { /* Upload success is already confirmed; a later profile refresh can retry. */ }
+      loadUserNotifications();
+    } catch (err) {
+      $('#credential-renewal-result', panel).innerHTML = `<div class="notice error">${esc(err.message)}</div>`;
+      toast(err.message, 'error');
+    } finally {
+      setBusy(e.submitter || submit, false);
+      if (!fileInput.files?.length) submit.disabled = true;
+    }
+  });
+}
+
 async function loadDashboard() {
   if (!requireAuth()) return;
 
-  let me = user();
-  if (!me) {
-    try { me = envelope(await api('/api/v1/me')); localStorage.setItem(USER_KEY, JSON.stringify(me)); }
-    catch { logout(); return; }
+  // Refresh the profile so the backend's current account-review state is reflected in the UI.
+  let me;
+  try {
+    me = envelope(await api('/api/v1/me'));
+    localStorage.setItem(USER_KEY, JSON.stringify(me));
+  } catch (err) {
+    const cached = user();
+    if (!cached) { logout(); return; }
+    me = cached;
+    toast('Could not refresh account status. Protected backend operations still enforce authorization.', 'warning');
   }
 
   $('#welcome-name').textContent = me.name || 'Member';
@@ -599,7 +816,7 @@ async function loadDashboard() {
  const actions = $('#dash-actions');
   if (actions) {
     const btns = [];
-    if (['FIRST_BUYER', 'BUYER', 'RESELLER'].includes(me.role))
+    if (me.role === 'FIRST_BUYER')
       btns.push(`<a class="button primary" href="register-device.html">Register device</a>`);
     if (me.role === 'RECYCLER')
       btns.push(`<a class="button primary" href="recycling.html">Recycling desk</a>`);
@@ -795,11 +1012,6 @@ async function loadDashboard() {
               <span class="metric" id="cnt-kyc">—</span>
               <p class="muted">Documents awaiting review</p>
             </div>
-            <div class="admin-card" onclick="location.href='#approvals'">
-              <span class="eyebrow">Pending approvals</span>
-              <span class="metric" id="cnt-approvals">—</span>
-              <p class="muted">VERIFIABLE / RECYCLER accounts</p>
-            </div>
             <div class="admin-card" onclick="location.href='#devices'">
               <span class="eyebrow">Device registry</span>
               <span class="metric" id="cnt-devices">—</span>
@@ -884,10 +1096,6 @@ async function loadDashboard() {
           <div class="panel-head"><div><span class="eyebrow">Open disputes</span><h2>Dispute queue</h2></div></div>
           <div id="disputes-list" class="stack"><div class="loading">Loading…</div></div>
         </div>
-        <div class="panel" id="approvals">
-          <div class="panel-head"><div><span class="eyebrow">Pending approvals</span><h2>VERIFIABLE &amp; RECYCLER accounts</h2></div></div>
-          <div id="approvals-list" class="stack"><div class="loading">Loading…</div></div>
-        </div>
         <div class="panel" id="kyc">
           <div class="panel-head"><div><span class="eyebrow">KYC documents</span><h2>Pending review</h2></div></div>
           <div id="kyc-list" class="stack"><div class="loading">Loading…</div></div>
@@ -904,6 +1112,7 @@ async function loadDashboard() {
 
 
   root.innerHTML = html || empty('No workspace', 'Your role does not have a configured dashboard.');
+  renderCredentialUploadPanel(root, me);
   loadUserNotifications();
   if (['FIRST_BUYER', 'BUYER', 'RESELLER'].includes(role)) {
     loadMyDevices();
@@ -1993,7 +2202,6 @@ async function loadAdminAll() {
   await Promise.all([
     loadAdminAnalytics(),
     loadAdminDisputes(),
-    loadAdminApprovals(),
     loadAdminKyc(),
     loadAdminDevices()
   ]);
@@ -2315,117 +2523,99 @@ async function adminResolveDispute(id) {
   } catch (e) { toast(e.message, 'error'); }
 }
 
-async function loadAdminApprovals() {
-  const el = $('#approvals-list');
-  if (!el) return;
-  try {
-    const d = envelope(await api('/admin/approvals/pending'));
-    
-    // ── BULLETPROOF ARRAY EXTRACTION ──
-    // This automatically finds the array regardless of what key the backend uses
-    const list = d.approvals || d.users || d.data || d.items || (Array.isArray(d) ? d : Object.values(d).find(Array.isArray) || []);
-    
-    $('#cnt-approvals').textContent = list.length;
-    
-    el.innerHTML = list.length
-      ? list.map(x => `
-        <div class="transfer-row">
-          <div>
-            <strong>${esc(x.name || '—')}</strong>
-            <p class="muted" style="font-size:.82rem">${esc(x.role)} · ${esc(x.phone || '—')}</p>
-            ${x.brand_auth_code ? `<p class="muted" style="font-size:.78rem">Brand auth: ${esc(x.brand_auth_code)}</p>` : ''}
-            ${x.cpcb_number     ? `<p class="muted" style="font-size:.78rem">CPCB: ${esc(x.cpcb_number)}</p>` : ''}
-          </div>
-          <div class="row-actions">
-            <button class="button primary small" data-approve="${esc(x.user_id || x.id)}">Approve</button>
-            <button class="button danger small"  data-reject="${esc(x.user_id || x.id)}">Reject</button>
-          </div>
-        </div>`).join('')
-      : empty('No pending approvals', 'All accounts processed.');
-      
-    $$('[data-approve]', el).forEach(b => b.addEventListener('click', () => adminApprove(b.dataset.approve, 'approve', b)));
-    $$('[data-reject]',  el).forEach(b => b.addEventListener('click', () => adminApprove(b.dataset.reject, 'reject', b)));
-  } catch (e) { el.innerHTML = empty('Error', e.message); }
-}
-
-// Replace this function
-async function adminApprove(id, action, btn) {
-  setBusy(btn, true, 'Working…');
-  try {
-    await api(`/admin/approvals/${id}/${action}`, { 
-      method: 'POST',
-      body: JSON.stringify({ notes: "Admin reviewed via dashboard" }) 
-    });
-    toast(`Account ${action}d.`);
-    loadAdminApprovals();
-  } catch (e) { toast(e.message, 'error'); }
-  finally { setBusy(btn, false); }
-}
 /* ── ADMIN KYC MANAGEMENT ────────────────────────────────────── */
 async function loadAdminKyc() {
   const el = $('#kyc-list');
   if (!el) return;
   try {
     const d = envelope(await api('/admin/kyc/pending'));
-    
-    // Explicitly targets 'pending_documents' from your Python output
-    const list = d.pending_documents || d.documents || (Array.isArray(d) ? d : Object.values(d).find(Array.isArray) || []);
-    
-    $('#cnt-kyc').textContent = list.length;
-    
-    el.innerHTML = list.length
-      ? list.map(x => `
-        <div class="transfer-row">
-          <div>
+    const list = Array.isArray(d.pending_documents) ? d.pending_documents : [];
+    if ($('#cnt-kyc')) $('#cnt-kyc').textContent = list.length;
+
+    el.innerHTML = list.length ? list.map(x => {
+      const reviewId = x.doc_id || x.evidence_id || x.id;
+      const evidenceId = x.evidence_id || (String(reviewId || '').startsWith('EV-') ? reviewId : null);
+      const viewPath = x.protected_view_url || x.view_url;
+      const canApprove = !!x.can_approve && !!x.has_stored_file && !!evidenceId && !!viewPath && !x.is_legacy_hash_only;
+      return `
+        <article class="transfer-row evidence-review-card" data-review-id="${esc(reviewId)}" data-evidence-id="${esc(evidenceId || '')}" data-requires-expiry="${x.requires_expiry ? 'true' : 'false'}">
+          <div style="flex:1;min-width:240px">
             <strong>${esc(x.doc_type || 'Document')}</strong>
-            <p class="muted" style="font-size:.82rem">User ${esc(x.user_id)} · ${fmtDate(x.uploaded_at || x.created_at)}</p>
-            ${x.serial_for_device ? `<p class="muted" style="font-size:.78rem">Serial on file: <span class="mono" style="color:var(--green)">${esc(x.serial_for_device)}</span></p>` : ''}
-            ${x.file_hash ? `<p class="muted" style="font-size:.75rem;font-family:'Space Mono',monospace;margin-top:4px;">🔒 Hash: <span style="color:var(--green)">${esc(x.file_hash.slice(0, 24))}...</span></p>` : ''}
+            <p class="muted" style="font-size:.82rem">${esc(x.user_name || 'Unknown user')} · ${esc(x.user_role || '—')} · ${esc(x.user_phone || x.user_id || '—')}</p>
+            <p class="muted" style="font-size:.78rem">Uploaded ${fmtDate(x.uploaded_at)} · Subject: ${esc(x.subject_type || '—')}</p>
+            ${x.serial_for_device ? `<p class="muted" style="font-size:.78rem">Device serial: <span class="mono">${esc(x.serial_for_device)}</span></p>` : ''}
+            ${x.claimed_document_number ? `<p class="muted" style="font-size:.78rem">Claimed document number: ${esc(x.claimed_document_number)}</p>` : ''}
+            ${x.claimed_issuer ? `<p class="muted" style="font-size:.78rem">Claimed issuer: ${esc(x.claimed_issuer)}</p>` : ''}
+            ${x.issued_at ? `<p class="muted" style="font-size:.78rem">Issue date: ${esc(x.issued_at)}</p>` : ''}
+            ${x.file_hash ? `<p class="muted" style="font-size:.75rem;font-family:'Space Mono',monospace;margin-top:4px">SHA-256: <span style="color:var(--green)">${esc(String(x.file_hash).slice(0, 24))}…</span></p>` : ''}
+            <div style="margin-top:10px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+              ${viewPath && x.has_stored_file ? `<a class="button secondary small" href="${esc(absoluteApiUrl(viewPath))}" target="_blank" rel="noopener noreferrer">Inspect document ↗</a>` : '<span class="chip chip-error">No inspectable file</span>'}
+              ${x.is_legacy_hash_only ? '<span class="muted" style="font-size:.8rem">Legacy hash-only record — re-upload actual file before accepting.</span>' : ''}
+            </div>
+            ${!x.is_legacy_hash_only && x.has_stored_file ? `
+              <label style="display:flex;align-items:flex-start;gap:8px;margin-top:12px;font-size:.84rem">
+                <input type="checkbox" data-inspected style="margin-top:3px">
+                <span>I opened and inspected the actual document and checked that its details match the claim.</span>
+              </label>
+              ${x.requires_expiry ? `<label style="display:block;margin-top:10px;font-size:.84rem">Expiry date confirmed from certificate <span class="req">*</span>
+                <input type="date" data-confirmed-expiry required style="display:block;margin-top:5px;max-width:260px">
+              </label>` : ''}
+              <label style="display:block;margin-top:10px;font-size:.84rem">Reviewer notes <span class="muted">(optional)</span>
+                <input type="text" data-review-notes maxlength="3000" placeholder="What was checked?" style="display:block;margin-top:5px;width:100%;max-width:520px">
+              </label>
+            ` : ''}
           </div>
-          <div class="row-actions">
+          <div class="row-actions" style="align-self:flex-start">
             ${chip(x.status || 'PENDING')}
-            <button class="button primary small" data-kyc-approve="${esc(x.doc_id || x.id)}">Approve</button>
-            <button class="button danger small"  data-kyc-reject="${esc(x.doc_id || x.id)}">Reject</button>
+            <button class="button primary small" data-kyc-approve="${esc(reviewId)}" ${canApprove ? '' : 'disabled title="A linked, pending evidence record and stored file are required"'}>Approve</button>
+            <button class="button danger small" data-kyc-reject="${esc(reviewId)}" ${x.status && x.status !== 'PENDING' ? 'disabled' : ''}>Reject</button>
           </div>
-        </div>`).join('')
-      : empty('KYC queue is clear', 'No documents pending review.');
+        </article>`;
+    }).join('') : empty('KYC queue is clear', 'No evidence records are pending review.');
 
     $$('[data-kyc-approve]', el).forEach(b => b.addEventListener('click', () => adminKycReview(b.dataset.kycApprove, 'approve', b)));
-    $$('[data-kyc-reject]',  el).forEach(b => b.addEventListener('click', () => adminKycReview(b.dataset.kycReject, 'reject', b)));
-  } catch (e) { el.innerHTML = empty('Error', e.message); }
+    $$('[data-kyc-reject]', el).forEach(b => b.addEventListener('click', () => adminKycReview(b.dataset.kycReject, 'reject', b)));
+  } catch (e) {
+    el.innerHTML = empty('Unable to load evidence queue', e.message);
+  }
 }
 
-// Replace this function
-// THE FIX: Added 'btn' parameter
 async function adminKycReview(docId, action, btn) {
-  const note = action === 'reject' ? prompt('Rejection reason (required):') : null;
-  
-  if (action === 'reject' && !note) {
-    toast('Rejection reason is required.', 'error');
-    return;
+  const card = btn?.closest('.evidence-review-card');
+  const payload = { decision: action === 'approve' ? 'ACCEPT' : 'REJECT' };
+
+  if (action === 'reject') {
+    const note = prompt('Rejection reason (required):');
+    if (!note?.trim()) { toast('A rejection reason is required.', 'error'); return; }
+    payload.rejection_reason = note.trim();
+  } else {
+    const inspected = card?.querySelector('[data-inspected]');
+    if (!inspected?.checked) {
+      toast('Open the protected viewer, inspect the actual file, then confirm the checkbox.', 'error');
+      return;
+    }
+    payload.document_inspected = true;
+    const expiryInput = card?.querySelector('[data-confirmed-expiry]');
+    if (card?.dataset.requiresExpiry === 'true') {
+      if (!expiryInput?.value) { toast('Enter the expiry date you confirmed on the certificate.', 'error'); expiryInput?.focus(); return; }
+      payload.confirmed_expires_at = expiryInput.value;
+    }
+    const reviewNotes = card?.querySelector('[data-review-notes]')?.value?.trim();
+    if (reviewNotes) payload.review_notes = reviewNotes;
   }
 
-  const decisionVal = action === 'approve' ? 'ACCEPT' : 'REJECT';
-  
-  // Build payload dynamically so we don't send nulls to strict Pydantic models
-  const payload = { decision: decisionVal };
-  if (note) payload.rejection_reason = note;
-
-  // THE FIX: Lock the button to prevent duplicate API clicks
-  setBusy(btn, true, 'Processing…');
+  setBusy(btn, true, action === 'approve' ? 'Verifying…' : 'Rejecting…');
   try {
-    await api(`/admin/kyc/${docId}/review`, {
+    const reviewResult = envelope(await api(`/admin/kyc/${encodeURIComponent(docId)}/review`, {
       method: 'POST',
       body: JSON.stringify(payload)
-    });
-    
-    toast(`Document successfully ${action}d.`);
-    loadAdminKyc();
-  } catch (e) { 
-    toast(e.message, 'error'); 
-  } finally { 
-    // THE FIX: Always unlock the button, even if the API fails
-    setBusy(btn, false); 
+    }));
+    toast(reviewResult?.message || (action === 'approve' ? 'Evidence verified.' : 'Evidence rejected. Corrected evidence may be submitted while the account remains pending.'));
+    await loadAdminKyc();
+  } catch (e) {
+    toast(e.message, 'error');
+  } finally {
+    setBusy(btn, false);
   }
 }
 
@@ -2745,7 +2935,7 @@ async function initRegisterDevice() {
   // ── PREVIEW & SMART AUTO-FILL ──
   function updatePreview() {
     const code   = ($('#brand_code')?.value || '??').toUpperCase();
-    const serial = ($('#serial_raw')?.value || 'SERIAL').toUpperCase();
+    const serial = normalizeClientSerial($('#serial_raw')?.value) || 'SERIAL';
     const el = $('#device-id-preview');
     if (el) el.textContent = `TL-${code}-${serial}`;
   }
@@ -2781,7 +2971,9 @@ async function initRegisterDevice() {
     }
 
     const fd = new FormData(mainForm);
-    const serial = fd.get('serial_raw')?.trim().toUpperCase();
+    const serial = normalizeClientSerial(fd.get('serial_raw'));
+
+    if (!serial) { toast('Enter a valid device serial number.', 'error'); return; }
 
     const config = {};
     ['processor', 'ram', 'storage', 'condition', 'display', 'gpu'].forEach(k => {
@@ -2863,14 +3055,13 @@ async function initRegisterDevice() {
 
   if (preview) {
     preview.style.display = 'block';
-    $('#hash-value').innerHTML =
-      '<span style="color:var(--amber)">Computing SHA-256... ⏳</span>';
+    preview.querySelector('strong')?.replaceChildren(document.createTextNode('Local SHA-256 preview (server recomputes the authoritative hash)'));
+    $('#hash-value').textContent = 'Computing…';
   }
 
   hashFile(f).then(h => {
 
-    $('#hash-value').innerHTML =
-      `<span style="color:var(--green)">🔒 ${h}</span>`;
+    $('#hash-value').textContent = h;
 
     btnToLock.disabled = false;
 
@@ -2878,8 +3069,7 @@ async function initRegisterDevice() {
 
     console.error('SHA-256 generation failed:', err);
 
-    $('#hash-value').innerHTML =
-      '<span style="color:var(--red)">Hash generation failed.</span>';
+    $('#hash-value').textContent = 'Preview unavailable; the server will verify uploaded bytes.';
 
     btnToLock.disabled = true;
 
@@ -2899,45 +3089,37 @@ async function initRegisterDevice() {
     if (f) { fileInput.files = e.dataTransfer.files; fileInput.dispatchEvent(new Event('change')); }
   });
 
-  // Submit the new invoice
+  // Submit actual invoice bytes through the new evidence upload endpoint.
   $('#new-kyc-form')?.addEventListener('submit', async e => {
     e.preventDefault();
-    const file = fileInput?.files[0];
-    const serialTarget = $('#kyc-serial-display').textContent;
-
+    const file = fileInput?.files?.[0];
+    const serialTarget = normalizeClientSerial($('#kyc-serial-display')?.textContent);
     if (!file) { toast('Please select an invoice to upload.', 'error'); return; }
+    if (!serialTarget) { toast('The device serial could not be read; restart the device registration flow.', 'error'); return; }
 
-    setBusy(e.submitter, true, 'Submitting invoice…');
+    setBusy(e.submitter || submitKycBtn, true, 'Uploading invoice…');
     try {
-      const fileHash = await hashFile(file);
-      const d = envelope(await api('/api/v1/kyc/upload', {
-        method: 'POST',
-        body: JSON.stringify({
-          doc_type: 'PURCHASE_PROOF',
-          file_hash: fileHash,
-          serial_for_device: serialTarget
-        })
-      }));
-
-      // Lock the UI on success
+      const d = await uploadEvidence({ docType: 'PURCHASE_PROOF', file, serial: serialTarget });
       $('#new-kyc-form').style.display = 'none';
       $('#new-kyc-result').innerHTML = `
         <div class="notice success">
-          <strong>Invoice submitted successfully!</strong><br>
-          Admin must approve the invoice for <span class="mono">${esc(serialTarget)}</span> before you can register this device.
-          <br>Document ID: <span class="mono">${esc(d.doc_id)}</span>
+          <strong>Invoice uploaded successfully.</strong><br>
+          Admin must inspect and approve the invoice for <span class="mono">${esc(serialTarget)}</span> before you can register this device.<br>
+          Evidence ID: <span class="mono">${esc(d.evidence_id || d.doc_id || '—')}</span>
         </div>
         <div style="margin-top:16px"><a class="button ghost" href="dashboard.html">Return to Dashboard</a></div>
       `;
       toast('Purchase proof submitted for review.');
-      
     } catch (x) {
       $('#new-kyc-result').innerHTML = `<div class="notice error">${esc(x.message)}</div>`;
       toast(x.message, 'error');
-    } finally { setBusy(e.submitter, false); }
+    } finally {
+      setBusy(e.submitter || submitKycBtn, false);
+    }
   });
 
-} // <--- Notice how this ONE bracket now cleanly encloses the entire function.
+}
+
   // ----------------------------------------
 /* ═══════════════════════════════════════════════════════════════
    RECYCLING
@@ -3106,6 +3288,8 @@ window.searchDevice = searchDevice;
 async function loadUserNotifications() {
   const root = $('#dashboard-content');
   if (!root) return;
+  // Replace rather than duplicate the alert stack when uploads trigger a refresh.
+  root.querySelector('#notif-stack')?.remove();
 
   try {
     const me = user();
@@ -3136,7 +3320,7 @@ async function loadUserNotifications() {
 
     // Beautiful UI Wrapper for Alerts
     const buildNotice = (id, type, icon, title, desc, actionHtml = '') => {
-      const closeBtn = `<button class="close-notif" data-id="${id}" style="position:absolute; top:12px; right:12px; background:none; border:none; font-size:1.4rem; cursor:pointer; opacity:0.4; transition:opacity 0.2s; line-height:1; padding:4px;">&times;</button>`;
+      const closeBtn = `<button class="close-notif" data-id="${esc(id)}" style="position:absolute; top:12px; right:12px; background:none; border:none; font-size:1.4rem; cursor:pointer; opacity:0.4; transition:opacity 0.2s; line-height:1; padding:4px;">&times;</button>`;
       return `
         <div class="notice ${type}" style="position:relative; display:flex; gap:16px; align-items:flex-start; padding:16px 20px; border-radius:var(--radius); overflow:hidden;">
           <div style="font-size:1.6rem; line-height:1; margin-top:2px;">${icon}</div>
@@ -3151,26 +3335,42 @@ async function loadUserNotifications() {
 
     // 2. Render KYC Notifications
     docs.forEach(doc => {
-      if (dismissed.includes(doc.doc_id)) return;
+      // Dismiss each status transition separately so a previously dismissed PENDING/ACCEPTED
+      // notification cannot hide a later EXPIRED or REVOKED state for the same record.
+      const notificationId = `${doc.doc_id}:${doc.status || 'UNKNOWN'}`;
+      if (dismissed.includes(notificationId)) return;
       hasVisible = true;
 
       if (doc.status === 'PENDING') {
         alertHtml += buildNotice(
-          doc.doc_id, 'info', '⏳', 
+          notificationId, 'info', '⏳', 
           'Document Review Pending', 
           `Your upload for ${doc.serial_for_device ? `<span class="mono">${esc(doc.serial_for_device)}</span>` : 'account verification'} is currently being reviewed by the admin team.`
         );
       } else if (doc.status === 'ACCEPTED' && doc.serial_for_device) {
         alertHtml += buildNotice(
-          doc.doc_id, 'success', '✅', 
+          notificationId, 'success', '✅', 
           'Purchase Proof Approved', 
           `Your invoice for <span class="mono">${esc(doc.serial_for_device)}</span> was verified. You can now mint this device's passport on-chain.`,
           `<a class="button primary small" href="register-device.html?serial=${encodeURIComponent(doc.serial_for_device)}">Register Device Now</a>`
         );
+      } else if (doc.status === 'EXPIRED') {
+        alertHtml += buildNotice(
+          notificationId, 'warning', '📅',
+          'Credential Expired — Re-verification Required',
+          `Your ${esc(doc.evidence_type || doc.doc_type || 'role credential')} has expired. Upload a renewed certificate in the Evidence Management panel below; privileged operations stay blocked until admin approval.`,
+          `<a class="button primary small" href="#credential-renewal-panel">Upload renewal</a>`
+        );
+      } else if (doc.status === 'REVOKED') {
+        alertHtml += buildNotice(
+          notificationId, 'error', '⛔',
+          'Credential Revoked',
+          `This credential was revoked by an administrator. Contact the TraceLoop admin team before submitting replacement evidence.`
+        );
       } else if (doc.status === 'REJECTED') {
         alertHtml += buildNotice(
-          doc.doc_id, 'error', '❌', 
-          'Document Rejected', 
+          notificationId, 'error', '❌',
+          'Document Rejected',
           `Your upload for ${doc.serial_for_device ? `<span class="mono">${esc(doc.serial_for_device)}</span>` : 'verification'} was rejected.<br><strong style="margin-top:4px;display:block;">Reason:</strong> ${esc(doc.rejection_reason || 'Invalid document.')}`
         );
       }

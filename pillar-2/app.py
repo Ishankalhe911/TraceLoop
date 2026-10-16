@@ -18,6 +18,7 @@ from routes.recycling_routes import router as recycling_router
 from routes.dispute_routes import router as dispute_router
 from routes.ledger_routes import router as ledger_router
 from routes.admin_routes import router as admin_router
+from routes.evidence_routes import router as evidence_router
 from routes.device_profile_routes import router as device_profile_router
 from routes.manufacturer_routes import router as manufacturer_router
 from routes.analytics_routes import router as analytics_router
@@ -114,6 +115,7 @@ app.include_router(recycling_router)
 app.include_router(dispute_router)
 app.include_router(ledger_router)
 app.include_router(admin_router)
+app.include_router(evidence_router)
 app.include_router(analytics_router)
 
 # Device Intelligence (Pillar 3)
