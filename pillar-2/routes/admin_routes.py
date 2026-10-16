@@ -25,6 +25,7 @@ from database import (
 )
 from routes.evidence_routes import (
     TIME_BOUND_CREDENTIALS,
+    TIME_BOUND_ENFORCEMENT_ENABLED,
     assert_active_role_evidence,
     certificate_date_for_display,
     create_signed_view_token,
@@ -202,7 +203,7 @@ def _review_evidence_record(
                 detail="Open the protected document viewer for this evidence before accepting it.",
             )
 
-        if evidence.evidence_type in TIME_BOUND_CREDENTIALS:
+        if TIME_BOUND_ENFORCEMENT_ENABLED and evidence.evidence_type in TIME_BOUND_CREDENTIALS:
             if not (payload.confirmed_expires_at or "").strip():
                 raise HTTPException(
                     status_code=400,
@@ -338,18 +339,33 @@ def get_pending_approvals(
         sync_expired_evidence_for_user(user, db)
         credential_type = ROLE_CREDENTIAL_TYPES[user.role]
         latest = _get_latest_evidence(db, user.id, credential_type)
+        credential_status = latest.verification_status.value if latest else "MISSING"
+        activation_stage = {
+            "MISSING": "DOCUMENT_REQUIRED",
+            "PENDING": "WAITING_FOR_DOCUMENT_REVIEW",
+            "VERIFIED": "READY_FOR_ACCOUNT_APPROVAL",
+            "REJECTED": "CORRECTION_REQUIRED",
+            "EXPIRED": "CREDENTIAL_EXPIRED",
+            "REVOKED": "CREDENTIAL_REVOKED",
+        }.get(credential_status, "CREDENTIAL_UNAVAILABLE")
         pending_accounts.append(
             {
+                # This is the one onboarding/activation request, derived from the user record.
+                # Do not create a second request row when evidence is accepted; evidence status
+                # simply moves this same request from waiting to ready for admin activation.
                 "user_id": user.id,
                 "name": user.name,
                 "phone": user.phone,
                 "role": user.role.value,
+                "user_status": user.status.value,
                 "brand_auth_code": user.brand_auth_code,
                 "service_center_id": user.service_center_id,
                 "cpcb_number": user.cpcb_number,
                 "credential_evidence_id": latest.id if latest else None,
-                "credential_status": latest.verification_status.value if latest else "MISSING",
-                "credential_expires_at": certificate_date_for_display(latest.expires_at) if latest else None,
+                "credential_status": credential_status,
+                "activation_stage": activation_stage,
+                "can_activate": credential_status == "VERIFIED",
+                "credential_expires_at": certificate_date_for_display(latest.expires_at) if latest and TIME_BOUND_ENFORCEMENT_ENABLED else None,
                 "created_at": user.created_at.isoformat() if user.created_at else None,
             }
         )
@@ -494,7 +510,7 @@ def get_pending_documents(
                 "claimed_issuer": evidence.claimed_issuer if evidence else None,
                 "issued_at": certificate_date_for_display(evidence.issued_at) if evidence else None,
                 "expires_at_claimed": certificate_date_for_display(evidence.expires_at) if evidence else None,
-                "requires_expiry": bool(evidence and evidence.evidence_type in TIME_BOUND_CREDENTIALS),
+                "requires_expiry": bool(TIME_BOUND_ENFORCEMENT_ENABLED and evidence and evidence.evidence_type in TIME_BOUND_CREDENTIALS),
                 "original_filename": evidence.original_filename if evidence else None,
                 "mime_type": evidence.mime_type if evidence else None,
                 "file_hash": evidence.file_sha256 if evidence else legacy.file_hash,
@@ -559,7 +575,7 @@ def get_pending_documents(
                 "claimed_issuer": evidence.claimed_issuer,
                 "issued_at": certificate_date_for_display(evidence.issued_at),
                 "expires_at_claimed": certificate_date_for_display(evidence.expires_at),
-                "requires_expiry": evidence.evidence_type in TIME_BOUND_CREDENTIALS,
+                "requires_expiry": bool(TIME_BOUND_ENFORCEMENT_ENABLED and evidence.evidence_type in TIME_BOUND_CREDENTIALS),
                 "original_filename": evidence.original_filename,
                 "mime_type": evidence.mime_type,
                 "file_hash": evidence.file_sha256,
