@@ -1012,6 +1012,11 @@ async function loadDashboard() {
               <span class="metric" id="cnt-kyc">—</span>
               <p class="muted">Documents awaiting review</p>
             </div>
+            <div class="admin-card" onclick="location.href='#approvals'">
+              <span class="eyebrow">Pending approvals</span>
+              <span class="metric" id="cnt-approvals">—</span>
+              <p class="muted">VERIFIABLE / RECYCLER accounts</p>
+            </div>
             <div class="admin-card" onclick="location.href='#devices'">
               <span class="eyebrow">Device registry</span>
               <span class="metric" id="cnt-devices">—</span>
@@ -1095,6 +1100,13 @@ async function loadDashboard() {
         <div class="panel" id="disputes">
           <div class="panel-head"><div><span class="eyebrow">Open disputes</span><h2>Dispute queue</h2></div></div>
           <div id="disputes-list" class="stack"><div class="loading">Loading…</div></div>
+        </div>
+        <div class="panel" id="approvals">
+          <div class="panel-head">
+            <div><span class="eyebrow">Account activation</span><h2>Pending account approvals</h2></div>
+          </div>
+          <p class="muted" style="margin:0 0 14px">This is the same onboarding request created from the user's account. Review the required credential in the KYC queue first; account activation becomes available only after that credential is verified.</p>
+          <div id="approvals-list" class="stack"><div class="loading">Loading…</div></div>
         </div>
         <div class="panel" id="kyc">
           <div class="panel-head"><div><span class="eyebrow">KYC documents</span><h2>Pending review</h2></div></div>
@@ -2202,6 +2214,7 @@ async function loadAdminAll() {
   await Promise.all([
     loadAdminAnalytics(),
     loadAdminDisputes(),
+    loadAdminApprovals(),
     loadAdminKyc(),
     loadAdminDevices()
   ]);
@@ -2523,6 +2536,79 @@ async function adminResolveDispute(id) {
   } catch (e) { toast(e.message, 'error'); }
 }
 
+/* ── ACCOUNT ACTIVATION REQUESTS ─────────────────────────────── */
+async function loadAdminApprovals() {
+  const el = $('#approvals-list');
+  if (!el) return;
+  try {
+    const data = envelope(await api('/admin/approvals/pending'));
+    const list = Array.isArray(data.pending_accounts) ? data.pending_accounts : [];
+    const count = $('#cnt-approvals');
+    if (count) count.textContent = list.length;
+
+    const stageLabels = {
+      DOCUMENT_REQUIRED: 'Document required',
+      WAITING_FOR_DOCUMENT_REVIEW: 'Waiting for document review',
+      READY_FOR_ACCOUNT_APPROVAL: 'Ready for account approval',
+      CORRECTION_REQUIRED: 'Corrected document required',
+      CREDENTIAL_EXPIRED: 'Credential expired',
+      CREDENTIAL_REVOKED: 'Credential revoked',
+      CREDENTIAL_UNAVAILABLE: 'Credential unavailable'
+    };
+
+    el.innerHTML = list.length ? list.map(account => {
+      const id = account.user_id || account.id;
+      const credentialVerified = account.credential_status === 'VERIFIED';
+      const stage = stageLabels[account.activation_stage] || 'Awaiting verification';
+      return `
+        <article class="transfer-row account-approval-card">
+          <div style="flex:1;min-width:240px">
+            <strong>${esc(account.name || '—')}</strong>
+            <p class="muted" style="font-size:.82rem">${esc(account.role || '—')} · ${esc(account.phone || '—')}</p>
+            ${account.brand_auth_code ? `<p class="muted" style="font-size:.78rem">Brand authorization: ${esc(account.brand_auth_code)} · Service centre: ${esc(account.service_center_id || '—')}</p>` : ''}
+            ${account.cpcb_number ? `<p class="muted" style="font-size:.78rem">CPCB reference: ${esc(account.cpcb_number)}</p>` : ''}
+            <p style="font-size:.82rem;margin-top:7px">Required credential: ${chip(account.credential_status || 'MISSING')}</p>
+            <p class="muted" style="font-size:.82rem">Activation request: <strong>${esc(stage)}</strong></p>
+            ${account.credential_evidence_id ? `<p class="muted" style="font-size:.75rem">Evidence ID: <span class="mono">${esc(account.credential_evidence_id)}</span></p>` : ''}
+          </div>
+          <div class="row-actions">
+            <button class="button primary small" data-approve-account="${esc(id)}" ${credentialVerified ? '' : 'disabled title="The required credential must be verified in the KYC queue before account activation"'}>Approve account</button>
+            <button class="button danger small" data-reject-account="${esc(id)}">Reject onboarding</button>
+          </div>
+        </article>`;
+    }).join('') : empty('No pending account approvals', 'Accounts appear here after phone verification. Their activation button becomes available when the required document has been accepted.');
+
+    $$('[data-approve-account]', el).forEach(button => button.addEventListener('click', () => adminAccountDecision(button.dataset.approveAccount, 'approve', button)));
+    $$('[data-reject-account]', el).forEach(button => button.addEventListener('click', () => adminAccountDecision(button.dataset.rejectAccount, 'reject', button)));
+  } catch (error) {
+    el.innerHTML = empty('Unable to load account approvals', error.message);
+  }
+}
+
+async function adminAccountDecision(userId, decision, button) {
+  let notes = 'Admin approved via dashboard';
+  if (decision === 'reject') {
+    notes = prompt('Reason for rejecting this onboarding request (required):');
+    if (!notes || !notes.trim()) {
+      toast('A rejection reason is required.', 'error');
+      return;
+    }
+  }
+  setBusy(button, true, 'Working…');
+  try {
+    const result = envelope(await api(`/admin/approvals/${encodeURIComponent(userId)}/${decision}`, {
+      method: 'POST',
+      body: JSON.stringify({ notes: notes.trim ? notes.trim() : notes })
+    }));
+    toast(result.message || (decision === 'approve' ? 'Account activated.' : 'Onboarding rejected.'));
+    await loadAdminApprovals();
+  } catch (error) {
+    toast(error.message, 'error');
+  } finally {
+    setBusy(button, false);
+  }
+}
+
 /* ── ADMIN KYC MANAGEMENT ────────────────────────────────────── */
 async function loadAdminKyc() {
   const el = $('#kyc-list');
@@ -2611,7 +2697,7 @@ async function adminKycReview(docId, action, btn) {
       body: JSON.stringify(payload)
     }));
     toast(reviewResult?.message || (action === 'approve' ? 'Evidence verified.' : 'Evidence rejected. Corrected evidence may be submitted while the account remains pending.'));
-    await loadAdminKyc();
+    await Promise.all([loadAdminKyc(), loadAdminApprovals()]);
   } catch (e) {
     toast(e.message, 'error');
   } finally {
@@ -3318,6 +3404,18 @@ async function loadUserNotifications() {
     let alertHtml = '<div class="stack" id="notif-stack" style="margin-bottom:32px; display:flex; flex-direction:column; gap:12px;">';
     let hasVisible = false;
 
+    // Role credential history is newest-first from the API. Show only the newest
+    // submission for each role-credential type so an old rejection does not look current
+    // after the user submits a replacement that is later accepted.
+    const seenRoleCredentialTypes = new Set();
+    const latestRoleCredentialDocIds = new Set();
+    docs.forEach(doc => {
+      if (doc.subject_type !== 'USER_ROLE_CREDENTIAL' || !doc.evidence_type) return;
+      if (seenRoleCredentialTypes.has(doc.evidence_type)) return;
+      seenRoleCredentialTypes.add(doc.evidence_type);
+      latestRoleCredentialDocIds.add(doc.doc_id || doc.evidence_id);
+    });
+
     // Beautiful UI Wrapper for Alerts
     const buildNotice = (id, type, icon, title, desc, actionHtml = '') => {
       const closeBtn = `<button class="close-notif" data-id="${esc(id)}" style="position:absolute; top:12px; right:12px; background:none; border:none; font-size:1.4rem; cursor:pointer; opacity:0.4; transition:opacity 0.2s; line-height:1; padding:4px;">&times;</button>`;
@@ -3335,9 +3433,11 @@ async function loadUserNotifications() {
 
     // 2. Render KYC Notifications
     docs.forEach(doc => {
+      if (doc.subject_type === 'USER_ROLE_CREDENTIAL' && doc.evidence_type &&
+          !latestRoleCredentialDocIds.has(doc.doc_id || doc.evidence_id)) return;
       // Dismiss each status transition separately so a previously dismissed PENDING/ACCEPTED
-      // notification cannot hide a later EXPIRED or REVOKED state for the same record.
-      const notificationId = `${doc.doc_id}:${doc.status || 'UNKNOWN'}`;
+      // notification cannot hide a later status for the same record.
+      const notificationId = `${doc.doc_id || doc.evidence_id}:${doc.status || 'UNKNOWN'}`;
       if (dismissed.includes(notificationId)) return;
       hasVisible = true;
 
@@ -3349,10 +3449,26 @@ async function loadUserNotifications() {
         );
       } else if (doc.status === 'ACCEPTED' && doc.serial_for_device) {
         alertHtml += buildNotice(
-          notificationId, 'success', '✅', 
-          'Purchase Proof Approved', 
+          notificationId, 'success', '✅',
+          'Purchase Proof Approved',
           `Your invoice for <span class="mono">${esc(doc.serial_for_device)}</span> was verified. You can now mint this device's passport on-chain.`,
           `<a class="button primary small" href="register-device.html?serial=${encodeURIComponent(doc.serial_for_device)}">Register Device Now</a>`
+        );
+      } else if (doc.status === 'ACCEPTED') {
+        const isRoleCredential = doc.subject_type === 'USER_ROLE_CREDENTIAL' ||
+          ['IDENTITY_PROOF', 'RECYCLER_AUTHORIZATION', 'BRAND_AUTHORIZATION', 'BUSINESS_REGISTRATION'].includes(doc.evidence_type);
+        const requiresSeparateActivation = isRoleCredential &&
+          ['RECYCLER', 'VERIFIABLE'].includes(me?.role) && me?.status === 'KYC_IN_PROGRESS';
+        const title = requiresSeparateActivation
+          ? 'Credential Accepted — Account Approval Pending'
+          : (isRoleCredential && me?.status === 'ACTIVE' ? 'Credential Accepted — Account Active' : 'Document Accepted');
+        const suffix = requiresSeparateActivation
+          ? ' Your account activation request is waiting for the admin’s final approval.'
+          : (isRoleCredential && me?.status === 'ACTIVE' ? ' Your account is active.' : '');
+        alertHtml += buildNotice(
+          notificationId, 'success', '✅',
+          title,
+          `${esc(doc.evidence_type || doc.doc_type || 'Account credential')} was inspected and accepted by the admin team.${suffix}`
         );
       } else if (doc.status === 'EXPIRED') {
         alertHtml += buildNotice(
