@@ -2609,6 +2609,67 @@ async function adminAccountDecision(userId, decision, button) {
   }
 }
 
+/* ── PRIVATE EVIDENCE VIEWER (JWT only; no bearer token in URLs) ── */
+async function fetchProtectedEvidenceBlob(path) {
+  const requestWithToken = accessToken => fetch(`${API_BASE}${path}`, {
+    method: 'GET',
+    headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {}
+  });
+
+  let accessToken = token();
+  if (!accessToken) throw new Error('Please sign in as an administrator to inspect evidence.');
+  let response = await requestWithToken(accessToken);
+
+  // Keep binary viewing compatible with the normal API helper's access-token refresh behavior.
+  if (response.status === 401 && localStorage.getItem(REFRESH_KEY)) {
+    const refreshResponse = await fetch(`${API_BASE}/api/v1/token/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: localStorage.getItem(REFRESH_KEY) })
+    });
+    if (refreshResponse.ok) {
+      const fresh = envelope(await refreshResponse.json().catch(() => ({})));
+      if (fresh.access_token) {
+        localStorage.setItem(TOKEN_KEY, fresh.access_token);
+        if (fresh.refresh_token) localStorage.setItem(REFRESH_KEY, fresh.refresh_token);
+        accessToken = fresh.access_token;
+        response = await requestWithToken(accessToken);
+      }
+    }
+  }
+
+  if (!response.ok) {
+    const body = await response.clone().json().catch(() => ({}));
+    throw new Error(body.detail || body.message || `Unable to inspect evidence (HTTP ${response.status}).`);
+  }
+  return response.blob();
+}
+
+async function openProtectedEvidence(evidenceId, button) {
+  // Open the tab synchronously from the user click so popup blockers do not swallow it.
+  const previewWindow = window.open('about:blank', '_blank');
+  if (!previewWindow) {
+    toast('Your browser blocked the document tab. Allow pop-ups for TraceLoop and retry.', 'error');
+    return;
+  }
+  try { previewWindow.opener = null; } catch (_) {}
+
+  setBusy(button, true, 'Opening…');
+  let objectUrl = null;
+  try {
+    const blob = await fetchProtectedEvidenceBlob(`/admin/evidence/${encodeURIComponent(evidenceId)}/view`);
+    objectUrl = URL.createObjectURL(blob);
+    previewWindow.location.replace(objectUrl);
+    // The document has been downloaded into this same-origin Blob URL; revoke it later.
+    window.setTimeout(() => { if (objectUrl) URL.revokeObjectURL(objectUrl); }, 5 * 60 * 1000);
+  } catch (error) {
+    try { previewWindow.close(); } catch (_) {}
+    toast(error.message || 'Could not open the protected document.', 'error');
+  } finally {
+    setBusy(button, false);
+  }
+}
+
 /* ── ADMIN KYC MANAGEMENT ────────────────────────────────────── */
 async function loadAdminKyc() {
   const el = $('#kyc-list');
@@ -2635,7 +2696,7 @@ async function loadAdminKyc() {
             ${x.issued_at ? `<p class="muted" style="font-size:.78rem">Issue date: ${esc(x.issued_at)}</p>` : ''}
             ${x.file_hash ? `<p class="muted" style="font-size:.75rem;font-family:'Space Mono',monospace;margin-top:4px">SHA-256: <span style="color:var(--green)">${esc(String(x.file_hash).slice(0, 24))}…</span></p>` : ''}
             <div style="margin-top:10px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
-              ${viewPath && x.has_stored_file ? `<a class="button secondary small" href="${esc(absoluteApiUrl(viewPath))}" target="_blank" rel="noopener noreferrer">Inspect document ↗</a>` : '<span class="chip chip-error">No inspectable file</span>'}
+              ${viewPath && x.has_stored_file && evidenceId ? `<button type="button" class="button secondary small" data-view-evidence="${esc(evidenceId)}">Inspect document ↗</button>` : '<span class="chip chip-error">No inspectable file</span>'}
               ${x.is_legacy_hash_only ? '<span class="muted" style="font-size:.8rem">Legacy hash-only record — re-upload actual file before accepting.</span>' : ''}
             </div>
             ${!x.is_legacy_hash_only && x.has_stored_file ? `
@@ -2659,6 +2720,7 @@ async function loadAdminKyc() {
         </article>`;
     }).join('') : empty('KYC queue is clear', 'No evidence records are pending review.');
 
+    $$('[data-view-evidence]', el).forEach(b => b.addEventListener('click', () => openProtectedEvidence(b.dataset.viewEvidence, b)));
     $$('[data-kyc-approve]', el).forEach(b => b.addEventListener('click', () => adminKycReview(b.dataset.kycApprove, 'approve', b)));
     $$('[data-kyc-reject]', el).forEach(b => b.addEventListener('click', () => adminKycReview(b.dataset.kycReject, 'reject', b)));
   } catch (e) {

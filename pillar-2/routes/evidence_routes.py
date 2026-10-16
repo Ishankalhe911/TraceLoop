@@ -3,13 +3,12 @@ import hmac
 import logging
 import os
 import re
-import time
 import uuid
 from datetime import datetime, time as datetime_time, timedelta, timezone
 from typing import Optional
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
@@ -61,7 +60,6 @@ SUPABASE_REQUEST_TIMEOUT = (8, 40)  # connect timeout, read timeout
 MAX_EVIDENCE_BYTES = 5 * 1024 * 1024  # 5 MB hard cap
 CHUNK_SIZE_BYTES = 64 * 1024          # 64 KB streaming chunks
 CERTIFICATE_TIMEZONE = ZoneInfo("Asia/Kolkata")
-optional_bearer = HTTPBearer(auto_error=False)
 
 # Phase 1 deliberately excludes RECYCLING_RECOVERY_PROOF until it can be scoped to an
 # active recycler and a matching, valid recycling workflow/device record.
@@ -204,36 +202,9 @@ def _resolve_evidence_type(raw_doc_type: str, user_role: UserRole) -> EvidenceTy
     return mapping[cleaned]
 
 
-def create_signed_view_token(evidence_id: str, admin_id: str, ttl_seconds: int = 300) -> str:
-    """Create a short-lived HMAC token for an admin evidence-view URL."""
-    if ttl_seconds < 1 or ttl_seconds > 600:
-        raise ValueError("ttl_seconds must be between 1 and 600")
-    exp = int(time.time()) + ttl_seconds
-    key = f"{JWT_SECRET}:evidence-view".encode("utf-8")
-    payload = f"{evidence_id}:{admin_id}:{exp}".encode("utf-8")
-    sig = hmac.new(key, payload, hashlib.sha256).hexdigest()
-    return f"{admin_id}.{exp}.{sig}"
-
-
-def verify_signed_view_token(evidence_id: str, token_str: str) -> str:
-    try:
-        admin_id, exp_str, sig = token_str.split(".", 2)
-        exp = int(exp_str)
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=401, detail="Malformed protected view token.")
-
-    if time.time() >= exp:
-        raise HTTPException(status_code=401, detail="Protected view link has expired. Refresh the Admin queue.")
-
-    key = f"{JWT_SECRET}:evidence-view".encode("utf-8")
-    expected_payload = f"{evidence_id}:{admin_id}:{exp}".encode("utf-8")
-    expected_sig = hmac.new(key, expected_payload, hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(sig, expected_sig):
-        raise HTTPException(status_code=403, detail="Invalid protected view token signature.")
-    return admin_id
-
 
 def _append_review_note(existing: Optional[str], note: str) -> str:
+    """Append a review/audit note without duplicating the same message."""
     if not existing:
         return note
     if note in existing:
@@ -242,11 +213,11 @@ def _append_review_note(existing: Optional[str], note: str) -> str:
 
 
 def sync_expired_evidence_for_user(user: User, db: Session) -> bool:
-    """Synchronize expiry status when the time-bound policy is enabled.
+    """Synchronize certificate expiry when time-bound enforcement is enabled.
 
-    Time-bound enforcement is intentionally disabled for this phase, so this helper is
-    currently a no-op. When re-enabled, it can expire invalid role credentials and move
-    affected active accounts to KYC_IN_PROGRESS.
+    Phase 1 deliberately disables this policy, so this is currently a no-op. Keeping
+    the helper preserves the existing imports/call sites and allows the later expiry
+    policy to be enabled consistently once its workflow is implemented end to end.
     """
     if not TIME_BOUND_ENFORCEMENT_ENABLED:
         return False
@@ -284,7 +255,7 @@ def sync_expired_evidence_for_user(user: User, db: Session) -> bool:
             rec.review_notes = _append_review_note(rec.review_notes, reason)
             changed = True
         else:
-            # An expiry date is optional for credential types not defined as time-bound.
+            # Expiry is optional for credential types not explicitly time-bound.
             has_valid_verified = True
 
     if not has_valid_verified and user.status == UserStatus.ACTIVE:
@@ -295,7 +266,6 @@ def sync_expired_evidence_for_user(user: User, db: Session) -> bool:
     if changed:
         db.commit()
     return changed
-
 
 def assert_active_role_evidence(user: User, required_type: EvidenceType, db: Session) -> EvidenceRecord:
     """Return a valid verified credential, or block the protected operation.
@@ -743,28 +713,21 @@ async def upload_evidence_file(
 @router.get("/admin/evidence/{evidence_id}/view")
 def view_protected_evidence_file(
     evidence_id: str,
-    view_token: Optional[str] = Query(None, description="5-minute signed view token"),
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(optional_bearer),
+    credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer()),
     db: Session = Depends(get_db),
 ):
-    """Serve private evidence only to an active admin with a valid JWT or signed view token."""
-    admin_user_id: Optional[str] = None
+    """Serve private evidence only to an active admin authenticated with a Bearer access JWT.
 
-    if credentials and credentials.credentials:
-        try:
-            payload = decode_token(credentials.credentials)
-        except Exception:
-            raise HTTPException(status_code=401, detail="Invalid or expired access token.")
-        if payload.get("type") != "access":
-            raise HTTPException(status_code=401, detail="Invalid token type.")
-        admin_user_id = payload.get("sub")
-    elif view_token:
-        admin_user_id = verify_signed_view_token(evidence_id, view_token)
-    else:
-        raise HTTPException(
-            status_code=401,
-            detail="Admin authentication required (pass Bearer token or signed view_token).",
-        )
+    No signed URL or query-string bearer token is supported. A copied URL alone must not
+    grant access to an evidence document.
+    """
+    try:
+        payload = decode_token(credentials.credentials)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid or expired access token.")
+    if payload.get("type") != "access":
+        raise HTTPException(status_code=401, detail="Invalid token type.")
+    admin_user_id = payload.get("sub")
 
     admin_user = db.query(User).filter(User.id == admin_user_id).first()
     if not admin_user or admin_user.role != UserRole.ADMIN or admin_user.status != UserStatus.ACTIVE:

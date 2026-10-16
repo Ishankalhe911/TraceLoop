@@ -28,7 +28,6 @@ from routes.evidence_routes import (
     TIME_BOUND_ENFORCEMENT_ENABLED,
     assert_active_role_evidence,
     certificate_date_for_display,
-    create_signed_view_token,
     evidence_object_exists,
     parse_certificate_date,
     sync_expired_evidence_for_user,
@@ -490,8 +489,8 @@ def get_pending_documents(
         file_exists = evidence_object_exists(evidence.file_reference) if evidence else False
         view_url = None
         if evidence is not None and file_exists:
-            view_token = create_signed_view_token(evidence.id, current_user.id)
-            view_url = f"/admin/evidence/{evidence.id}/view?view_token={view_token}"
+            # Plain endpoint path only. The frontend fetches it with the admin Bearer JWT.
+            view_url = f"/admin/evidence/{evidence.id}/view"
         results.append(
             {
                 "doc_id": legacy.id,
@@ -551,8 +550,8 @@ def get_pending_documents(
         file_exists = evidence_object_exists(evidence.file_reference)
         view_url = None
         if file_exists:
-            view_token = create_signed_view_token(evidence.id, current_user.id)
-            view_url = f"/admin/evidence/{evidence.id}/view?view_token={view_token}"
+            # Plain endpoint path only. The frontend fetches it with the admin Bearer JWT.
+            view_url = f"/admin/evidence/{evidence.id}/view"
         legacy_pending_or_standalone = (
             not evidence.legacy_kyc_doc_id
             or (linked_doc is not None and linked_doc.status == DocStatus.PENDING)
