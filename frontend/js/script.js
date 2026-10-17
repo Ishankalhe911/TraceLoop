@@ -1156,7 +1156,14 @@ async function loadMyDevices() {
     el.innerHTML = list.length
       ? list.map(x => {
           const stampValid = !!x.stamp_valid;
-          const legacyTest = x.is_legacy_test === true || x.registration_status === 'LEGACY_TEST';
+          const legacyTest = x.is_legacy_test === true
+            || x.identity_version === 'V1_LEGACY'
+            || x.registration_status === 'LEGACY_TEST';
+          const confirmedV2 = x.identity_version === 'V2_PUBLIC_ID'
+            && x.registration_status === 'CONFIRMED'
+            && x.read_only !== true;
+          const readOnly = !confirmedV2;
+          const canViewPassport = legacyTest || confirmedV2;
           const terminal = ['RECYCLED', 'EXPORTED'].includes(
             String(x.status || '').toUpperCase()
           );
@@ -1165,7 +1172,7 @@ async function loadMyDevices() {
             <article class="device-card">
               <div class="device-top">
                 <span class="mono">${esc(x.device_id)}</span>
-                ${chip(x.status === 'TRANSFERRED' ? 'NEWLY ACQUIRED' : x.status)}
+                ${chip(legacyTest ? 'V1 LEGACY' : (x.status === 'TRANSFERRED' ? 'NEWLY ACQUIRED' : x.status))}
               </div>
 
               <h3 style="margin:8px 0 6px">
@@ -1183,11 +1190,15 @@ async function loadMyDevices() {
 
               ${legacyTest ? `
                 <div class="notice warning" style="margin-top:10px;padding:10px 12px;font-size:.78rem">
-                  Legacy test passport — read-only historical record. Its generated Phase 2 public ID was not registered on-chain.
+                  V1 Legacy Test Passport — read-only historical record. Its synthetic display ID was not registered on-chain.
                 </div>
-              ` : ''}
+              ` : (readOnly ? `
+                <div class="notice warning" style="margin-top:10px;padding:10px 12px;font-size:.78rem">
+                  Registration is not confirmed. Lifecycle actions stay disabled until the V2 registration is reconciled.
+                </div>
+              ` : '')}
 
-              ${!legacyTest ? `
+              ${confirmedV2 ? `
                 <p class="muted" style="font-size:.78rem;margin-top:4px">
                   Stamp:
                   ${
@@ -1199,7 +1210,7 @@ async function loadMyDevices() {
               ` : ''}
 
               ${
-                !legacyTest && !stampValid && !terminal
+                confirmedV2 && !stampValid && !terminal
                   ? `
                     <div class="notice warning"
                          style="margin-top:10px;padding:10px 12px;font-size:.78rem">
@@ -1212,12 +1223,14 @@ async function loadMyDevices() {
 
               <div class="card-actions">
 
-                <a class="button ghost small"
-                   href="track.html?id=${encodeURIComponent(x.device_id)}">
-                  View passport
-                </a>
+                ${canViewPassport ? `
+                  <a class="button ghost small"
+                     href="track.html?id=${encodeURIComponent(x.device_id)}">
+                    View passport
+                  </a>
+                ` : ''}
 
-                ${!legacyTest ? `
+                ${confirmedV2 ? `
                 <button
                   class="button secondary small"
                   data-hardware-change="${esc(x.device_id)}"
@@ -1262,7 +1275,7 @@ async function loadMyDevices() {
                   }>
                   Transfer
                 </button>
-                ` : '<span class="muted" style="font-size:.8rem">Read-only legacy test record</span>'}
+                ` : `<span class="muted" style="font-size:.8rem">${legacyTest ? 'V1 Legacy — read-only' : 'Lifecycle actions unavailable until registration is confirmed'}</span>`}
 
 
               </div>
@@ -2082,8 +2095,8 @@ async function loadIncoming() {
           </div>
           <div class="row-actions">
             ${chip(x.is_legacy_test ? 'LEGACY_TEST' : x.status)}
-            ${x.is_legacy_test
-              ? '<span class="muted" style="font-size:.8rem">Read-only legacy test record</span>'
+            ${x.read_only
+              ? `<span class="muted" style="font-size:.8rem">${x.is_legacy_test ? 'V1 Legacy — read-only' : 'Actions unavailable until V2 registration is confirmed'}</span>`
               : x.status === 'PENDING'
                 ? `<button class="button primary small" data-accept="${esc(x.transfer_id)}">Accept</button>
                    <button class="button ghost small" data-cancel="${esc(x.transfer_id)}">Cancel</button>`
@@ -2203,8 +2216,8 @@ async function loadPendingCompletion() {
           </div>
           <div class="row-actions">
             ${chip(x.is_legacy_test ? 'LEGACY_TEST' : (x.stamp_valid ? 'VERIFIED' : 'NEEDS STAMP'))}
-            ${x.is_legacy_test
-              ? '<span class="muted" style="font-size:.8rem">Read-only legacy test record</span>'
+            ${x.read_only
+              ? `<span class="muted" style="font-size:.8rem">${x.is_legacy_test ? 'V1 Legacy — read-only' : 'Actions unavailable until V2 registration is confirmed'}</span>`
               : `<button class="button primary small" data-complete="${esc(x.transfer_id)}">Complete transfer</button>`
             }
           </div>
@@ -2793,21 +2806,26 @@ async function loadAdminDevices() {
     const list = d.devices || d || [];
     $('#cnt-devices').textContent = d.total ?? (Array.isArray(list) ? list.length : '—');
     el.innerHTML = list.length
-      ? list.map(x => `
+      ? list.map(x => {
+        const publicId = x.public_id || x.device_id;
+        const legacy = x.is_legacy_test === true || x.identity_version === 'V1_LEGACY' || x.registration_status === 'LEGACY_TEST';
+        const canViewPassport = legacy || (x.identity_version === 'V2_PUBLIC_ID' && x.registration_status === 'CONFIRMED');
+        return `
         <div class="transfer-row">
           <div>
-            <span class="mono">${esc(x.public_id || x.device_id)}</span>
+            <span class="mono">${esc(publicId)}</span>
             <h3>${esc(x.brand_name || x.brand || 'Device')}</h3>
             <p class="muted" style="font-size:.82rem">Owner: ${esc(x.current_owner_id || '—')} · ${fmtDate(x.registered_at)}</p>
           </div>
           <div class="row-actions">
-            ${chip(x.status)}
-            <a class="button ghost small" href="track.html?id=${encodeURIComponent(x.public_id || x.device_id)}">Passport</a>
-            ${x.registration_status === 'CONFIRMED' && !['RECYCLED', 'EXPORTED'].includes(x.status)
-              ? `<button class="button danger small" data-export="${esc(x.public_id || x.device_id)}">Export</button>`
+            ${chip(legacy ? 'V1 LEGACY' : x.status)}
+            ${canViewPassport ? `<a class="button ghost small" href="track.html?id=${encodeURIComponent(publicId)}">Passport</a>` : ''}
+            ${!legacy && x.identity_version === 'V2_PUBLIC_ID' && x.registration_status === 'CONFIRMED' && !['RECYCLED', 'EXPORTED'].includes(x.status)
+              ? `<button class="button danger small" data-export="${esc(publicId)}">Export</button>`
               : ''}
           </div>
-        </div>`).join('')
+        </div>`;
+      }).join('')
       : empty('No devices', 'No devices in the registry.');
     $$('[data-export]', el).forEach(b => b.addEventListener('click', async () => {
       if (!confirm(`Mark ${b.dataset.export} as EXPORTED? This is terminal.`)) return;
@@ -2833,87 +2851,64 @@ async function searchDevice() {
   const inputEl = $('#device-id');
   if (!inputEl) return;
 
-  // THE FIX: Instantly self-heal and sanitize the input field value
   inputEl.value = inputEl.value.trim().toUpperCase().replace(/[^A-Z0-9-]/g, '');
   const id = inputEl.value;
-
   if (!id) { toast('Enter a device ID.', 'error'); return; }
 
-  const r = $('#track-result');
-  r.innerHTML = `<div class="loading">Loading passport for <span class="mono">${esc(id)}</span>…</div>`;
+  const result = $('#track-result');
+  result.innerHTML = `<div class="loading">Loading passport for <span class="mono">${esc(id)}</span>…</div>`;
 
   try {
-    const opts = token() ? {} : { auth: false };
-    const [dv, tr, di, ev, st] = await Promise.allSettled([
-      api(`/devices/${encodeURIComponent(id)}`, opts),
-      api(`/transfers/device/${encodeURIComponent(id)}`, opts),
-      api(`/disputes/device/${encodeURIComponent(id)}`, opts),
-      api(`/ledger/device/${encodeURIComponent(id)}/events`, opts),
-      api(`/ledger/device/${encodeURIComponent(id)}/state`, opts),
-    ]);
+    // Public tracking uses one explicitly sanitized endpoint; it does not call
+    // private owner, dispute, or authenticated ledger endpoints in parallel.
+    const response = await api(`/devices/public/${encodeURIComponent(id)}`, { auth: false });
+    const device = envelope(response);
+    const history = Array.isArray(device.history) ? device.history : [];
+    const events = Array.isArray(device.events) ? device.events : [];
+    const isLegacy = !!device.is_legacy_test || device.identity_version === 'V1_LEGACY';
 
-    const d      = dv.status === 'fulfilled' ? envelope(dv.value) : {};
-    const tx     = tr.status === 'fulfilled' ? envelope(tr.value) : {};
-    const ds     = di.status === 'fulfilled' ? envelope(di.value) : {};
-    const events = ev.status === 'fulfilled' ? envelope(ev.value) : {};
-    const state  = st.status === 'fulfilled' ? envelope(st.value) : {};
-
-    const transfers = tx.transfers || tx.history || (Array.isArray(tx) ? tx : []);
-    const disputes  = ds.disputes  || (Array.isArray(ds) ? ds : []);
-    const evList    = events.events || (Array.isArray(events) ? events : []);
-
-    r.innerHTML = `
+    result.innerHTML = `
       <div class="passport-header">
         <div>
           <span class="eyebrow">Digital Product Passport</span>
-          <h2>${esc(d.brand_name || d.brand || 'Device passport')}</h2>
-          <p class="mono" style="margin-top:4px">${esc(d.device_id || id)}</p>
+          <h2>${esc(device.brand_name || device.brand || 'Device passport')}</h2>
+          <p class="mono" style="margin-top:4px">${esc(device.public_id || device.device_id || id)}</p>
         </div>
-        ${chip(d.status || d.db_status || 'UNKNOWN')}
+        ${device.status ? chip(device.status) : ''}
       </div>
 
-      ${d.is_legacy_test ? `
+      ${isLegacy ? `
         <div class="notice warning" style="margin:14px 0;padding:12px 14px">
-          <strong>Legacy Test Passport — read-only.</strong>
-          This is a preserved historical test record. The generated Phase 2 public ID was not registered on-chain, so live chain state is not queried. Any event history shown here is the existing off-chain mirror.
+          <strong>V1 Legacy Test Passport — read-only.</strong>
+          This is a preserved historical test record. Its displayed public ID is an off-chain lookup ID; available historical chain state and mirrored lifecycle events are shown without enabling new lifecycle actions.
         </div>
       ` : ''}
 
+      ${device.message && !isLegacy ? `<p class="notice info" style="margin:14px 0;padding:12px 14px">${esc(device.message)}</p>` : ''}
+
       <div class="stat-grid">
-        <div><small>Database state</small><strong>${esc(d.status || d.db_status || '—')}</strong></div>
-        <div><small>Chain state</small><strong>${esc(state.state_label || d.chain_status || '—')}</strong></div>
-        <div><small>Stamp valid</small><strong style="color:${d.stamp_valid ? 'var(--green)' : 'var(--red)'}">
-          ${d.stamp_valid ? '✓ Yes' : '✗ No'}
+        <div><small>Database state</small><strong>${esc(device.status || '—')}</strong></div>
+        <div><small>Chain state</small><strong>${esc(device.chain_status || '—')}</strong></div>
+        <div><small>Stamp valid</small><strong style="color:${device.stamp_valid ? 'var(--green)' : 'var(--red)'}">
+          ${device.stamp_valid ? '✓ Yes' : '✗ No'}
         </strong></div>
-        <div><small>Registered</small><strong>${fmtDate(d.registered_at)}</strong></div>
+        <div><small>Registered</small><strong>${fmtDate(device.registered_at)}</strong></div>
       </div>
 
       <div class="passport-columns">
         <section>
           <div class="section-label">Configuration</div>
-          <pre>${esc(JSON.stringify(d.current_config || {}, null, 2))}</pre>
+          <pre>${esc(JSON.stringify(device.current_config || {}, null, 2))}</pre>
         </section>
         <section>
           <div class="section-label">Ownership chain</div>
           <div class="mini-list">
-            ${transfers.length
-              ? transfers.map(x => `<div class="mini-row">
-                  <strong>${esc(x.status || x.event_type || 'Record')}</strong>
-                  <span>${fmtDate(x.initiated_at || x.created_at || x.timestamp)}</span>
+            ${history.length
+              ? history.map(item => `<div class="mini-row">
+                  <strong>${esc(item.status || item.event_type || 'Record')}</strong>
+                  <span>${fmtDate(item.timestamp)}</span>
                 </div>`).join('')
-              : '<p class="muted">No transfer records yet.</p>'
-            }
-          </div>
-        </section>
-        <section>
-          <div class="section-label">Disputes</div>
-          <div class="mini-list">
-            ${disputes.length
-              ? disputes.map(x => `<div class="mini-row">
-                  <strong>${esc(String(x.dispute_type || '').replace(/_/g, ' ') || 'Dispute')}</strong>
-                  <span>${chip(x.status)}</span>
-                </div>`).join('')
-              : '<p class="muted">No disputes on record.</p>'
+              : '<p class="muted">No approved lifecycle history is available.</p>'
             }
           </div>
         </section>
@@ -2921,11 +2916,11 @@ async function searchDevice() {
 
       <div class="ledger">
         <div class="section-label">Ledger events</div>
-        ${renderEvents(evList)}
+        ${renderEvents(events)}
       </div>
     `;
-  } catch (e) {
-    r.innerHTML = empty('Passport unavailable', e.message);
+  } catch (error) {
+    result.innerHTML = empty('Passport unavailable', error.message || 'The passport could not be loaded.');
   }
 }
 

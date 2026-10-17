@@ -26,9 +26,12 @@ from auth import RequireRole, get_current_user
 from database import (
     DocStatus,
     DocType,
+    ChainStatus,
     Device,
     DeviceStatus,
+    IdentityVersion,
     KYCDocument,
+    LedgerEvent,
     RegistrationStatus,
     User,
     UserRole,
@@ -37,6 +40,7 @@ from database import (
 from services.device_identity import (
     generate_internal_id,
     generate_public_id,
+    is_public_id,
     resolve_brand,
 )
 from services.ledger_service import LedgerSubmissionError, ledger_service
@@ -250,6 +254,8 @@ def register_device(
     pending_device = Device(
         id=internal_id,
         public_id=public_id,
+        identity_version=IdentityVersion.V2_PUBLIC_ID,
+        legacy_chain_id=None,
         serial_hash=serial_hash,
         serial_raw=serial_upper,
         brand_code=brand.code,
@@ -517,9 +523,11 @@ def get_my_devices(
     for device in devices:
         registration_status = _enum_value(device.registration_status)
         device_status = _enum_value(device.status)
-        # Do not present a row with an unconfirmed chain registration as a normal
-        # REGISTERED device to older clients that only inspect the `status` key.
-        if registration_status == RegistrationStatus.CONFIRMED.value:
+        # Legacy test rows retain their historical off-chain data but their
+        # synthetic Phase 2 public_id was never registered on-chain.
+        if registration_status == RegistrationStatus.LEGACY_TEST.value:
+            display_status = "LEGACY_TEST"
+        elif registration_status == RegistrationStatus.CONFIRMED.value:
             display_status = device_status
         elif registration_status == RegistrationStatus.RECONCILIATION_REQUIRED.value:
             display_status = "RECONCILIATION_REQUIRED"
@@ -535,6 +543,15 @@ def get_my_devices(
                 "status": display_status,
                 "device_status": device_status,
                 "registration_status": registration_status,
+                "identity_version": _enum_value(device.identity_version),
+                "is_legacy_test": (
+                    _enum_value(device.identity_version) == IdentityVersion.V1_LEGACY.value
+                    or registration_status == RegistrationStatus.LEGACY_TEST.value
+                ),
+                "read_only": (
+                    _enum_value(device.identity_version) != IdentityVersion.V2_PUBLIC_ID.value
+                    or registration_status != RegistrationStatus.CONFIRMED.value
+                ),
                 "stamp_valid": device.stamp_valid,
                 "is_for_sale": device.is_for_sale,
                 "asking_price": float(device.asking_price) if device.asking_price else None,
@@ -547,6 +564,185 @@ def get_my_devices(
         )
 
     return standard_response({"total_owned": len(results), "devices": results})
+
+
+# Positive allowlist for the device-registration form. A denylist can miss a
+# private value placed under an unexpected custom key in legacy configuration.
+_PUBLIC_CONFIG_FIELDS = ("processor", "ram", "storage", "condition", "display", "gpu")
+
+
+_PUBLIC_LIFECYCLE_EVENTS = {
+    "REGISTERED",
+    "VERIFIED",
+    "TRANSFERRED",
+    "HARDWARE_CHANGED",
+    "RECYCLED",
+    "EXPORTED",
+}
+
+
+def _public_config_value(value: Any) -> Dict[str, Any]:
+    """Expose only known hardware fields; never recursively publish arbitrary JSON."""
+    if not isinstance(value, dict):
+        return {}
+
+    normalized = {str(key).strip().lower(): item for key, item in value.items()}
+    public: Dict[str, Any] = {}
+    for key in _PUBLIC_CONFIG_FIELDS:
+        item = normalized.get(key)
+        if isinstance(item, str):
+            # Keep display values bounded and prevent unusual objects from being serialized.
+            item = item.strip()[:160]
+            if item:
+                public[key] = item
+        elif item is None or isinstance(item, (int, float, bool)):
+            if item is not None:
+                public[key] = item
+    return public
+
+
+def _iso_datetime(value: Optional[datetime]) -> Optional[str]:
+    normalized = make_aware(value)
+    return normalized.isoformat() if normalized else None
+
+
+@router.get("/public/{device_id}")
+def get_public_passport(
+    device_id: str,
+    db: Session = Depends(get_db),
+):
+    """Return a public-safe passport summary without private dispute data.
+
+    A synthetic public_id assigned to a V1 legacy record is only an off-chain
+    lookup/display key. V1 chain state is resolved using legacy_chain_id stored
+    on the database row; this value is never returned to the public caller.
+    """
+    if not is_public_id(device_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Passport not found.")
+
+    device = db.query(Device).filter(Device.public_id == device_id).first()
+    if device is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Passport not found.")
+
+    identity_version = _enum_value(device.identity_version)
+    registration_status = _enum_value(device.registration_status)
+    is_legacy = (
+        identity_version == IdentityVersion.V1_LEGACY.value
+        or registration_status == RegistrationStatus.LEGACY_TEST.value
+    )
+    if not is_legacy and (
+        identity_version != IdentityVersion.V2_PUBLIC_ID.value
+        or registration_status != RegistrationStatus.CONFIRMED.value
+    ):
+        # Pending/failed/reconciliation-only records are not public passports.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Passport not found.")
+
+    # Public site policy: never return dispute type, dispute status, comments,
+    # resolution notes, raw event metadata, owner IDs/hashes, or internal UUIDs.
+    mirrored_events = (
+        db.query(LedgerEvent)
+        .filter(
+            LedgerEvent.device_id == device.id,
+            LedgerEvent.chain_status == ChainStatus.CONFIRMED,
+        )
+        .order_by(LedgerEvent.timestamp.desc())
+        .all()
+    )
+    visible_events = [
+        event for event in mirrored_events
+        if str(_enum_value(event.event_type)).upper() in _PUBLIC_LIFECYCLE_EVENTS
+    ]
+
+    chain_state = None
+    chain_status = "LEGACY_CHAIN_STATE_UNAVAILABLE" if is_legacy else "NOT_SUBMITTED"
+    if is_legacy:
+        if device.legacy_chain_id:
+            try:
+                chain_state = ledger_service.get_legacy_device_state(device.legacy_chain_id)
+                chain_status = chain_state.get("state_label", "UNKNOWN")
+            except Exception as exc:
+                logger.info(
+                    "Legacy chain state unavailable (device_row_id_hash=%s, exception_type=%s)",
+                    hashlib.sha256(device.id.encode("utf-8")).hexdigest()[:12],
+                    type(exc).__name__,
+                )
+                chain_status = "LEGACY_CHAIN_STATE_UNAVAILABLE"
+    elif registration_status in (
+        RegistrationStatus.CONFIRMED.value,
+        RegistrationStatus.RECONCILIATION_REQUIRED.value,
+    ):
+        try:
+            chain_state = ledger_service.get_device_state(device.public_id)
+            chain_status = chain_state.get("state_label", "UNKNOWN")
+        except Exception as exc:
+            logger.info(
+                "Public passport chain state unavailable (exception_type=%s)", type(exc).__name__
+            )
+            chain_status = "UNREACHABLE"
+    elif registration_status == RegistrationStatus.PENDING.value:
+        chain_status = "PENDING_REGISTRATION"
+    elif registration_status == RegistrationStatus.FAILED.value:
+        chain_status = "NOT_SUBMITTED"
+
+    db_status = _enum_value(device.status)
+    dispute_state_hidden = (
+        str(db_status).upper() == DeviceStatus.DISPUTED.value
+        or str(chain_status).upper() == DeviceStatus.DISPUTED.value
+    )
+    # If either source says DISPUTED, omit both state labels rather than expose
+    # or indirectly identify the private dispute state through a special label.
+    # Preserve the actual historical lifecycle state for V1 passports; the
+    # separate identity_version/registration_status fields carry the legacy label.
+    # Only a disputed state itself is omitted from the public view.
+    public_status = None if dispute_state_hidden else db_status
+    public_chain_status = None if dispute_state_hidden else chain_status
+    stamp_valid = (
+        bool(chain_state.get("stamp_valid")) if chain_state is not None
+        else bool(device.stamp_valid)
+    )
+
+    event_payload = []
+    history_payload = []
+    for event in visible_events:
+        timestamp = _iso_datetime(event.confirmed_at or event.timestamp)
+        row = {
+            "event_type": str(_enum_value(event.event_type)),
+            "tx_hash": event.tx_hash,
+            "block_number": event.block_number,
+            "timestamp": timestamp,
+        }
+        event_payload.append(row)
+        history_payload.append({
+            "event_type": row["event_type"],
+            "status": row["event_type"],
+            "timestamp": timestamp,
+        })
+
+    return standard_response({
+        "device_id": device.public_id,
+        "public_id": device.public_id,
+        "identity_version": identity_version,
+        "is_legacy_test": is_legacy,
+        "read_only": is_legacy or registration_status != RegistrationStatus.CONFIRMED.value,
+        "brand": device.brand_name,
+        "brand_name": device.brand_name,
+        "status": public_status,
+        "registration_status": registration_status,
+        "chain_status": public_chain_status,
+        "stamp_valid": stamp_valid,
+        "registered_at": _iso_datetime(device.registered_at),
+        "last_verified_at": _iso_datetime(device.last_verified_at),
+        "current_config": _public_config_value(device.current_config or {}),
+        "history": history_payload,
+        "transfers": history_payload,
+        "events": event_payload,
+        "total_events": len(event_payload),
+        "message": (
+            "V1 Legacy Test Passport — read-only. This synthetic passport ID is an off-chain display ID; "
+            "historical chain state and mirrored lifecycle events are shown only where available."
+            if is_legacy else None
+        ),
+    })
 
 
 @router.get("/{device_id}")
@@ -567,24 +763,63 @@ def get_device(
         )
 
     registration_status = _enum_value(db_device.registration_status)
-    # A definite pre-submission failure or a still-pending row is not represented
-    # as an on-chain registration. Reconciliation-required rows may be inspected
-    # against the chain, but this read does not automatically change DB status.
-    if registration_status in (RegistrationStatus.PENDING.value, RegistrationStatus.FAILED.value):
+    identity_version = _enum_value(db_device.identity_version)
+    is_legacy_test = (
+        identity_version == IdentityVersion.V1_LEGACY.value
+        or registration_status == RegistrationStatus.LEGACY_TEST.value
+    )
+    # Legacy identity is authoritative even if a partially migrated row has a
+    # mismatched registration_status. Never query chain state with its synthetic
+    # public_id. Pending/failed V2 rows also must not be represented as registered.
+    if is_legacy_test or registration_status in (
+        RegistrationStatus.PENDING.value,
+        RegistrationStatus.FAILED.value,
+    ):
+        chain_status = (
+            "LEGACY_CHAIN_STATE_UNAVAILABLE" if is_legacy_test else
+            "NOT_SUBMITTED" if registration_status == RegistrationStatus.FAILED.value else
+            "NOT_CHECKED"
+        )
+        chain_stamp_valid = db_device.stamp_valid
+        if is_legacy_test and db_device.legacy_chain_id:
+            try:
+                legacy_state = ledger_service.get_legacy_device_state(db_device.legacy_chain_id)
+                chain_status = legacy_state.get("state_label", "UNKNOWN")
+                chain_stamp_valid = legacy_state.get("stamp_valid", db_device.stamp_valid)
+            except Exception as exc:
+                logger.info(
+                    "Legacy chain state unavailable (exception_type=%s)",
+                    type(exc).__name__,
+                )
+                chain_status = "LEGACY_CHAIN_STATE_UNAVAILABLE"
+
         return standard_response(
             {
                 "device_id": db_device.public_id,
                 "public_id": db_device.public_id,
+                "identity_version": identity_version,
                 "brand": db_device.brand_name,
-                "serial_raw": db_device.serial_raw,
+                "status": _enum_value(db_device.status),
                 "db_status": _enum_value(db_device.status),
+                "serial_raw": db_device.serial_raw,
                 "registration_status": registration_status,
-                "chain_status": (
-                    "NOT_SUBMITTED" if registration_status == RegistrationStatus.FAILED.value else "NOT_CHECKED"
+                "chain_status": chain_status,
+                "stamp_valid": chain_stamp_valid,
+                "is_legacy_test": is_legacy_test,
+                "read_only": is_legacy_test or registration_status != RegistrationStatus.CONFIRMED.value,
+                "message": (
+                    "V1 Legacy Test Passport: historical record is preserved for read-only viewing; "
+                    "the synthetic public ID was not registered on-chain."
+                    if is_legacy_test else None
                 ),
-                "stamp_valid": db_device.stamp_valid,
                 "current_config": db_device.current_config,
                 "registered_at": make_aware(db_device.registered_at).isoformat() if db_device.registered_at else None,
+                "registration_tx_id": None if is_legacy_test else db_device.registration_tx_id,
+                "registration_confirmed_round": None if is_legacy_test else db_device.registration_confirmed_round,
+                "legacy_registration_tx_id": db_device.registration_tx_id if is_legacy_test else None,
+                "legacy_registration_confirmed_round": (
+                    db_device.registration_confirmed_round if is_legacy_test else None
+                ),
                 "registration_error_code": db_device.registration_error_code,
             }
         )

@@ -237,11 +237,9 @@ class LedgerService:
             raise Exception(f"Simulation failed: {result.failure_message}")
         return result.abi_results[0].return_value
 
-    def get_device_state(self, public_id: str) -> Dict[str, Any]:
-        public_id = validate_public_id(public_id)
-        boxes = [self.get_device_box(public_id)]
-        raw_state = self._simulate_readonly("get_device_state", [public_id], boxes)
-
+    @staticmethod
+    def _format_device_state(raw_state: Any) -> Dict[str, Any]:
+        """Convert the contract's DeviceRecord result into a stable response."""
         state_map = {
             1: "REGISTERED",
             2: "VERIFIED",
@@ -251,7 +249,6 @@ class LedgerService:
             6: "EXPORTED",
         }
         numeric_state = raw_state[0]
-
         return {
             "state_numeric": numeric_state,
             "state_label": state_map.get(numeric_state, "UNKNOWN"),
@@ -261,6 +258,36 @@ class LedgerService:
             "last_verifier": raw_state[4],
             "updated_at": raw_state[5],
         }
+
+    def get_device_state(self, public_id: str) -> Dict[str, Any]:
+        """Read a Phase 2 device by its validated public Passport ID."""
+        public_id = validate_public_id(public_id)
+        boxes = [self.get_device_box(public_id)]
+        raw_state = self._simulate_readonly("get_device_state", [public_id], boxes)
+        return self._format_device_state(raw_state)
+
+    def get_legacy_device_state(self, legacy_chain_id: str) -> Dict[str, Any]:
+        """Read a V1 historical record by its stored legacy chain ID.
+
+        This intentionally bypasses V2 public-ID validation only for a legacy
+        key resolved from the database. It is read-only and must never be used by
+        transaction-writing methods. The caller must not accept this identifier
+        directly from an unauthenticated request.
+        """
+        if (
+            not isinstance(legacy_chain_id, str)
+            or not legacy_chain_id.startswith("TL-")
+            or len(legacy_chain_id.encode("utf-8")) > 120
+        ):
+            raise ValueError("Stored legacy chain identifier is unavailable or invalid.")
+
+        device_bytes = legacy_chain_id.encode("utf-8")
+        length_prefix = len(device_bytes).to_bytes(2, "big")
+        legacy_box = [self.app_id, b"device_" + length_prefix + device_bytes]
+        raw_state = self._simulate_readonly(
+            "get_device_state", [legacy_chain_id], [legacy_box]
+        )
+        return self._format_device_state(raw_state)
 
     def can_verify(self, public_id: str) -> bool:
         public_id = validate_public_id(public_id)

@@ -6,11 +6,12 @@ from pydantic import BaseModel, Field
 from typing import Optional
 from database import (
     get_db, Device, Transfer, User, UserRole, DeviceStatus, TransferStatus,
-    UserStatus, RegistrationStatus, LedgerEvent, ChainStatus
+    UserStatus, RegistrationStatus, IdentityVersion, LedgerEvent, ChainStatus
 )
 from services.ledger_service import LedgerSubmissionError
 from auth import get_current_user, RequireRole
 from services.ledger_service import ledger_service
+from services.device_policy import require_confirmed_v2_device, is_confirmed_v2_device
 
 router = APIRouter(prefix="/transfers", tags=["Transfers & Marketplace"])
 
@@ -35,6 +36,11 @@ def make_aware(dt: datetime) -> datetime:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt
+
+def require_confirmed_registration(device: Device, action: str) -> None:
+    """Require both V2 identity mode and confirmed on-chain registration."""
+    require_confirmed_v2_device(device, action)
+
 
 def verify_stamp_validity(device: Device, db: Session):
     """
@@ -104,6 +110,7 @@ def list_device_for_sale(
     device = db.query(Device).filter(Device.public_id == device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found.")
+    require_confirmed_registration(device, "marketplace listing")
     if device.current_owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="Only the owner can list this device.")
 
@@ -133,6 +140,7 @@ def unlist_device(
     device = db.query(Device).filter(Device.public_id == device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found.")
+    require_confirmed_registration(device, "marketplace unlisting")
     if device.current_owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="Only the owner can unlist this device.")
 
@@ -159,7 +167,8 @@ def get_marketplace_listings_auth(
     devices = db.query(Device).filter(
         Device.is_for_sale.is_(True),
         Device.stamp_valid.is_(True),
-        Device.registration_status == RegistrationStatus.CONFIRMED
+        Device.registration_status == RegistrationStatus.CONFIRMED,
+        Device.identity_version == IdentityVersion.V2_PUBLIC_ID,
     ).all()
 
     results = []
@@ -200,7 +209,8 @@ def get_marketplace_listings(db: Session = Depends(get_db)):
     devices = db.query(Device).filter(
         Device.is_for_sale.is_(True),
         Device.stamp_valid.is_(True),
-        Device.registration_status == RegistrationStatus.CONFIRMED
+        Device.registration_status == RegistrationStatus.CONFIRMED,
+        Device.identity_version == IdentityVersion.V2_PUBLIC_ID,
     ).all()
 
     results = []
@@ -248,6 +258,7 @@ def initiate_transfer(
     device = db.query(Device).filter(Device.public_id == payload.device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found.")
+    require_confirmed_registration(device, "transfer initiation")
     if device.current_owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="Only the current owner can initiate a transfer.")
     if payload.to_user_id == current_user.id:
@@ -346,6 +357,17 @@ def get_incoming_transfers(
             "brand_name": device.brand_name if device else "Unknown Device",
             "current_config": device.current_config if device else {},
             "status": t.status,
+            "registration_status": device.registration_status.value if device else None,
+            "identity_version": (
+                device.identity_version.value if device and hasattr(device.identity_version, "value") else None
+            ),
+            "is_legacy_test": bool(
+                device and (
+                    device.identity_version == IdentityVersion.V1_LEGACY
+                    or device.registration_status == RegistrationStatus.LEGACY_TEST
+                )
+            ),
+            "read_only": bool(device and not is_confirmed_v2_device(device)),
             "initiated_at": make_aware(t.initiated_at).isoformat() if t.initiated_at else None
         })
 
@@ -373,6 +395,17 @@ def get_transfers_pending_completion(
             "brand_name": device.brand_name if device else "Unknown",
             "current_config": device.current_config if device else {},
             "stamp_valid": device.stamp_valid if device else False,
+            "registration_status": device.registration_status.value if device else None,
+            "identity_version": (
+                device.identity_version.value if device and hasattr(device.identity_version, "value") else None
+            ),
+            "is_legacy_test": bool(
+                device and (
+                    device.identity_version == IdentityVersion.V1_LEGACY
+                    or device.registration_status == RegistrationStatus.LEGACY_TEST
+                )
+            ),
+            "read_only": bool(device and not is_confirmed_v2_device(device)),
             "initiated_at": make_aware(t.initiated_at).isoformat() if t.initiated_at else None
         })
 
@@ -397,6 +430,10 @@ def accept_transfer(
         raise HTTPException(status_code=404, detail="Transfer not found.")
     if transfer.to_user_id != current_user.id:
         raise HTTPException(status_code=403, detail="You are not the intended recipient of this transfer.")
+    device = db.query(Device).filter(Device.id == transfer.device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found.")
+    require_confirmed_registration(device, "transfer acceptance")
     if transfer.status != TransferStatus.PENDING:
         raise HTTPException(
             status_code=409,
@@ -434,6 +471,11 @@ def cancel_transfer(
             detail="Only the seller or buyer can cancel this transfer."
         )
 
+    device = db.query(Device).filter(Device.id == transfer.device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found.")
+    require_confirmed_registration(device, "transfer cancellation")
+
     if getattr(transfer, "chain_attempt_status", None) in {
         "SUBMISSION_STARTED", "SUBMISSION_UNKNOWN", "CONFIRMED_DB_PENDING"
     }:
@@ -451,11 +493,9 @@ def cancel_transfer(
 
     transfer.status = TransferStatus.CANCELLED
 
-    # Restore device to VERIFIED — chain state unchanged, only DB
-    device = db.query(Device).filter(Device.id == transfer.device_id).first()
-    if device:
-        device.status = DeviceStatus.VERIFIED
-        # Don't restore is_for_sale — seller must re-list explicitly
+    # Restore device to VERIFIED — chain state unchanged, only DB.
+    device.status = DeviceStatus.VERIFIED
+    # Don't restore is_for_sale — seller must re-list explicitly.
 
     db.commit()
 
@@ -496,11 +536,7 @@ def complete_transfer(
     if not device:
         raise HTTPException(status_code=404, detail="Device not found.")
 
-    if device.registration_status != RegistrationStatus.CONFIRMED:
-        raise HTTPException(
-            status_code=409,
-            detail="Device registration is not confirmed. Transfer is blocked pending reconciliation."
-        )
+    require_confirmed_registration(device, "transfer completion")
 
     # Stamp TTL check
     verify_stamp_validity(device, db)
@@ -641,6 +677,7 @@ def get_device_transfer_history(
         .filter(
             LedgerEvent.device_id == device.id,
             LedgerEvent.chain_status == ChainStatus.CONFIRMED,
+            LedgerEvent.event_type.in_(["REGISTERED", "VERIFIED", "TRANSFERRED", "HARDWARE_CHANGED", "RECYCLED", "EXPORTED"]),
         )
         .order_by(LedgerEvent.timestamp.desc())
         .all()
@@ -648,7 +685,7 @@ def get_device_transfer_history(
 
     history = []
     for event in events:
-        # Never expose raw event metadata, actor IDs, or serial-related fields.
+        # Never expose dispute statuses, raw event metadata, actor IDs, or serials.
         history.append({
             "event_type": event.event_type,
             "transaction_id": event.tx_hash,
@@ -660,6 +697,12 @@ def get_device_transfer_history(
     return standard_response({
         "device_id": device.public_id,
         "brand": device.brand_name,
+        "identity_version": device.identity_version.value,
+        "is_legacy_test": (
+            device.identity_version == IdentityVersion.V1_LEGACY
+            or device.registration_status == RegistrationStatus.LEGACY_TEST
+        ),
+        "read_only": not is_confirmed_v2_device(device),
         "total_events": len(history),
         "history": history,
     })

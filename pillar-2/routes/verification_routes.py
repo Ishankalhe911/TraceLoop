@@ -38,6 +38,7 @@ from database import (
 )
 from services.device_identity import is_public_id
 from services.ledger_service import LedgerSubmissionError, ledger_service
+from services.device_policy import require_confirmed_v2_device, is_confirmed_v2_device
 
 router = APIRouter(prefix="/verification", tags=["Verification"])
 logger = logging.getLogger(__name__)
@@ -94,11 +95,7 @@ def _get_device_by_public_id(db: Session, public_id: str) -> Device:
 
 
 def _require_confirmed_registration(device: Device) -> None:
-    if device.registration_status != RegistrationStatus.CONFIRMED:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Device registration is not confirmed on the ledger yet.",
-        )
+    require_confirmed_v2_device(device, "verification operations")
 
 
 def _get_request_and_device(
@@ -223,7 +220,7 @@ def get_assigned_verification_requests(
     results = []
     for request in requests:
         device = db.query(Device).filter(Device.id == request.device_id).first()
-        if device is None or device.registration_status != RegistrationStatus.CONFIRMED:
+        if device is None or not is_confirmed_v2_device(device):
             continue
         results.append(
             {

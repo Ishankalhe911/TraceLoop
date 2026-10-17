@@ -7,9 +7,10 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 # Import frozen models, RBAC, and Ledger Service
-from database import get_db, Device, DeviceHardwareLog, ChangeType, User, DeviceStatus, RegistrationStatus
+from database import get_db, Device, DeviceHardwareLog, ChangeType, User, UserRole, DeviceStatus, RegistrationStatus
 from auth import get_current_user
 from services.ledger_service import ledger_service
+from services.device_policy import require_confirmed_v2_device
 
 router = APIRouter(prefix="/device-profiles", tags=["Device Profiles"])
 
@@ -59,11 +60,7 @@ def declare_hardware_change(
     device = db.query(Device).filter(Device.public_id == device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found.")
-    if device.registration_status != RegistrationStatus.CONFIRMED:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Device has no confirmed Phase 2 on-chain registration; hardware changes are blocked.",
-        )
+    require_confirmed_v2_device(device, "hardware changes")
 
     # Terminal state guard — no further hardware mutations are possible.
     if device.status in [DeviceStatus.RECYCLED, DeviceStatus.EXPORTED]:
@@ -187,6 +184,11 @@ def get_hardware_log(
     device = db.query(Device).filter(Device.public_id == device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found.")
+    if current_user.role != UserRole.ADMIN and device.current_owner_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the current device owner or an administrator can view the private hardware log.",
+        )
 
     logs = db.query(DeviceHardwareLog).filter(
         DeviceHardwareLog.device_id == device.id

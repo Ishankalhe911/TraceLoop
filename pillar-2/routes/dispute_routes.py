@@ -16,11 +16,12 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 
 from database import (
-    get_db, Device, DeviceStatus, RegistrationStatus, User, UserRole,
+    get_db, Device, DeviceStatus, RegistrationStatus, IdentityVersion, User, UserRole,
     Dispute, DisputeStatus, DisputeType
 )
 from auth import get_current_user, RequireRole
 from services.ledger_service import ledger_service
+from services.device_policy import require_confirmed_v2_device
 
 router = APIRouter(prefix="/disputes", tags=["Disputes"])
 
@@ -89,11 +90,7 @@ def report_dispute(
     device = db.query(Device).filter(Device.public_id == payload.device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found.")
-    if device.registration_status != RegistrationStatus.CONFIRMED:
-        raise HTTPException(
-            status_code=409,
-            detail="Device has no confirmed Phase 2 on-chain registration; disputes are blocked.",
-        )
+    require_confirmed_v2_device(device, "dispute reporting")
 
     # Block reports on terminal devices
     if device.status in [DeviceStatus.RECYCLED, DeviceStatus.EXPORTED]:
@@ -180,11 +177,7 @@ def freeze_device(
     device = db.query(Device).filter(Device.id == dispute.device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found.")
-    if device.registration_status != RegistrationStatus.CONFIRMED:
-        raise HTTPException(
-            status_code=409,
-            detail="Device has no confirmed Phase 2 on-chain registration; freeze is blocked.",
-        )
+    require_confirmed_v2_device(device, "dispute freeze")
 
     # Re-check device isn't already frozen (race condition guard)
     if device.status == DeviceStatus.DISPUTED:
@@ -265,11 +258,7 @@ def resolve_dispute(
     device = db.query(Device).filter(Device.id == dispute.device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found.")
-    if device.registration_status != RegistrationStatus.CONFIRMED:
-        raise HTTPException(
-            status_code=409,
-            detail="Device has no confirmed Phase 2 on-chain registration; dispute resolution is blocked.",
-        )
+    require_confirmed_v2_device(device, "dispute resolution")
 
     # Enforce contract rule: cannot resolve into terminal or disputed states
     if payload.resolved_state not in [
@@ -337,6 +326,8 @@ def get_device_disputes(
     device = db.query(Device).filter(Device.public_id == device_id).first()
     if device is None:
         raise HTTPException(status_code=404, detail="Device not found.")
+    if current_user.role != UserRole.ADMIN and device.current_owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="You are not authorized to view this device's private dispute history.")
 
     disputes = db.query(Dispute).filter(
         Dispute.device_id == device.id
@@ -410,6 +401,17 @@ def get_open_disputes(
             "brand_name": device.brand_name if device else "Unknown",
             "current_device_status": device.status if device else "UNKNOWN",
             "current_config": device.current_config if device else {},
+            "identity_version": (
+                device.identity_version.value if device and hasattr(device.identity_version, "value") else None
+            ),
+            "is_legacy_test": bool(device and (
+                device.identity_version == IdentityVersion.V1_LEGACY
+                or device.registration_status == RegistrationStatus.LEGACY_TEST
+            )),
+            "read_only": bool(device and (
+                device.identity_version != IdentityVersion.V2_PUBLIC_ID
+                or device.registration_status != RegistrationStatus.CONFIRMED
+            )),
             "dispute_type": d.dispute_type,
             "description": d.description,
             "evidence_path": d.evidence_path,
@@ -417,7 +419,12 @@ def get_open_disputes(
             "raised_by_role": d.raised_by_role,
             "status": d.status,
             "next_action": (
-                "POST /disputes/{id}/freeze — approve and freeze on-chain"
+                "Read-only legacy test record; no mutation is permitted."
+                if device and (
+                    device.identity_version == IdentityVersion.V1_LEGACY
+                    or device.registration_status == RegistrationStatus.LEGACY_TEST
+                )
+                else "POST /disputes/{id}/freeze — approve and freeze on-chain"
                 if d.status == DisputeStatus.UNDER_REVIEW
                 else "PATCH /disputes/{id}/resolve — resolve and restore on-chain"
             ),

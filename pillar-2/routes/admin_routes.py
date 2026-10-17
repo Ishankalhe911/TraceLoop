@@ -12,6 +12,7 @@ from database import (
     AdminActionType,
     Device,
     DeviceStatus,
+    IdentityVersion,
     RegistrationStatus,
     DocStatus,
     EvidenceRecord,
@@ -35,6 +36,7 @@ from routes.evidence_routes import (
     verify_evidence_file_integrity,
 )
 from services.ledger_service import ledger_service
+from services.device_policy import require_confirmed_v2_device
 
 logger = logging.getLogger("TraceLoop.AdminRoutes")
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -720,11 +722,7 @@ def export_device(
     device = db.query(Device).filter(Device.public_id == device_id).first()
     if device is None:
         raise HTTPException(status_code=404, detail="Device not found.")
-    if device.registration_status != RegistrationStatus.CONFIRMED:
-        raise HTTPException(
-            status_code=409,
-            detail="Device has no confirmed Phase 2 on-chain registration; export is blocked.",
-        )
+    require_confirmed_v2_device(device, "export")
     if device.status in {DeviceStatus.RECYCLED, DeviceStatus.EXPORTED}:
         raise HTTPException(status_code=409, detail=f"Device is already in terminal state: {device.status.value}.")
 
@@ -766,12 +764,39 @@ def get_all_devices(
     devices = db.query(Device).order_by(Device.registered_at.desc()).all()
     return standard_response(
         {
-            "total": len(devices),
+            "total": sum(
+                device.identity_version == IdentityVersion.V2_PUBLIC_ID
+                and device.registration_status == RegistrationStatus.CONFIRMED
+                for device in devices
+            ),
+            "legacy_test_records": sum(
+                device.identity_version == IdentityVersion.V1_LEGACY
+                or device.registration_status == RegistrationStatus.LEGACY_TEST
+                for device in devices
+            ),
             "devices": [
                 {
                     "device_id": device.public_id,
+                    "public_id": device.public_id,
                     "brand": device.brand_name,
-                    "status": device.status.value,
+                    "status": (
+                        "V1_LEGACY"
+                        if (
+                            device.identity_version == IdentityVersion.V1_LEGACY
+                            or device.registration_status == RegistrationStatus.LEGACY_TEST
+                        )
+                        else device.status.value
+                    ),
+                    "registration_status": device.registration_status.value,
+                    "identity_version": device.identity_version.value if hasattr(device.identity_version, "value") else str(device.identity_version),
+                    "is_legacy_test": (
+                        device.identity_version == IdentityVersion.V1_LEGACY
+                        or device.registration_status == RegistrationStatus.LEGACY_TEST
+                    ),
+                    "read_only": (
+                        device.identity_version != IdentityVersion.V2_PUBLIC_ID
+                        or device.registration_status != RegistrationStatus.CONFIRMED
+                    ),
                     "stamp_valid": device.stamp_valid,
                     "current_owner_id": device.current_owner_id,
                     "is_for_sale": device.is_for_sale,

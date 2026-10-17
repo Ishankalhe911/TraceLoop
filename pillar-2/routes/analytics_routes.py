@@ -5,9 +5,9 @@ Regulator-facing analytics layer.
 Closes the PS3 IEngage requirement:
   "Real-time analytics for regulators and consumer incentive mechanisms"
 
-All metrics derived from existing Device, LedgerEvent, Transfer,
-Dispute, DeviceHardwareLog, and RecyclingRecord tables.
-Zero new blockchain transactions. Zero new schema changes.
+Metrics are derived from existing Device, LedgerEvent, Transfer,
+Dispute, DeviceHardwareLog, and RecyclingRecord tables. V1 legacy history is
+segregated from confirmed V2 operational metrics. No blockchain transactions are sent.
 
 Endpoints:
   GET /analytics/overview     — Full system snapshot for regulator dashboard
@@ -19,14 +19,14 @@ import os
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, or_
 
 from database import (
-    get_db, Device, DeviceStatus, LedgerEvent,
+    get_db, Device, DeviceStatus, RegistrationStatus, IdentityVersion, LedgerEvent,
     Transfer, TransferStatus, Dispute, DisputeStatus,
     DeviceHardwareLog, RecyclingRecord, User, UserRole
 )
-from auth import get_current_user
+from auth import RequireRole
 
 router = APIRouter(prefix="/analytics", tags=["Analytics & Regulatory"])
 
@@ -52,7 +52,7 @@ def standard_response(data: dict = None, code: int = 200) -> dict:
 @router.get("/overview")
 def get_analytics_overview(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(RequireRole([UserRole.ADMIN]))
 ):
     """
     Complete system analytics overview.
@@ -67,10 +67,47 @@ def get_analytics_overview(
     """
 
     # ── DEVICE STATE COUNTS ──────────────────────────────────────────────
-    total_devices = db.query(func.count(Device.id)).scalar() or 0
+    # Legacy Phase 1 test passports stay available for history, but they are not
+    # counted as current registered devices in operational lifecycle metrics.
+    legacy_filter = or_(
+        Device.identity_version == IdentityVersion.V1_LEGACY,
+        Device.registration_status == RegistrationStatus.LEGACY_TEST,
+    )
+    operational_filter = (
+        Device.identity_version == IdentityVersion.V2_PUBLIC_ID,
+        Device.registration_status == RegistrationStatus.CONFIRMED,
+    )
+    legacy_test_devices = (
+        db.query(func.count(Device.id)).filter(legacy_filter).scalar() or 0
+    )
+    total_devices = (
+        db.query(func.count(Device.id)).filter(*operational_filter).scalar() or 0
+    )
+    pending_registrations = (
+        db.query(func.count(Device.id))
+        .filter(
+            Device.identity_version == IdentityVersion.V2_PUBLIC_ID,
+            Device.registration_status == RegistrationStatus.PENDING,
+        ).scalar() or 0
+    )
+    failed_registrations = (
+        db.query(func.count(Device.id))
+        .filter(
+            Device.identity_version == IdentityVersion.V2_PUBLIC_ID,
+            Device.registration_status == RegistrationStatus.FAILED,
+        ).scalar() or 0
+    )
+    reconciliation_required = (
+        db.query(func.count(Device.id))
+        .filter(
+            Device.identity_version == IdentityVersion.V2_PUBLIC_ID,
+            Device.registration_status == RegistrationStatus.RECONCILIATION_REQUIRED,
+        ).scalar() or 0
+    )
 
     state_counts = dict(
         db.query(Device.status, func.count(Device.id))
+        .filter(*operational_filter)
         .group_by(Device.status)
         .all()
     )
@@ -89,18 +126,33 @@ def get_analytics_overview(
     recycling_rate = round((recycled_count / total_devices * 100), 2) if total_devices > 0 else 0.0
 
     # ── HARDWARE CHANGE ACTIVITY ─────────────────────────────────────────
-    total_hardware_changes = db.query(func.count(DeviceHardwareLog.id)).scalar() or 0
-
-    # Devices that have at least one hardware change declared
-    devices_with_hw_changes = (
-        db.query(func.count(func.distinct(DeviceHardwareLog.device_id))).scalar() or 0
+    total_hardware_changes = (
+        db.query(func.count(DeviceHardwareLog.id))
+        .join(Device, Device.id == DeviceHardwareLog.device_id)
+        .filter(*operational_filter)
+        .scalar() or 0
     )
 
-    # ── DISPUTE STATISTICS ───────────────────────────────────────────────
-    total_disputes = db.query(func.count(Dispute.id)).scalar() or 0
+    # Devices that have at least one hardware change declared in the active V2 set.
+    devices_with_hw_changes = (
+        db.query(func.count(func.distinct(DeviceHardwareLog.device_id)))
+        .join(Device, Device.id == DeviceHardwareLog.device_id)
+        .filter(*operational_filter)
+        .scalar() or 0
+    )
+
+    # ── DISPUTE STATISTICS: operational V2 only ──────────────────────────
+    total_disputes = (
+        db.query(func.count(Dispute.id))
+        .join(Device, Device.id == Dispute.device_id)
+        .filter(*operational_filter)
+        .scalar() or 0
+    )
 
     dispute_state_counts = dict(
         db.query(Dispute.status, func.count(Dispute.id))
+        .join(Device, Device.id == Dispute.device_id)
+        .filter(*operational_filter)
         .group_by(Dispute.status)
         .all()
     )
@@ -111,22 +163,26 @@ def get_analytics_overview(
     disputes_dismissed    = dispute_state_counts.get(DisputeStatus.DISMISSED, 0)
 
     # ── TRANSFER STATISTICS ──────────────────────────────────────────────
-    total_transfers = db.query(func.count(Transfer.id)).scalar() or 0
+    transfer_query = db.query(Transfer).join(Device, Device.id == Transfer.device_id).filter(*operational_filter)
+    total_transfers = transfer_query.count()
     completed_transfers = (
         db.query(func.count(Transfer.id))
-        .filter(Transfer.status == TransferStatus.COMPLETED)
+        .join(Device, Device.id == Transfer.device_id)
+        .filter(*operational_filter, Transfer.status == TransferStatus.COMPLETED)
         .scalar() or 0
     )
 
     # Fraud flags
     velocity_flagged = (
         db.query(func.count(Transfer.id))
-        .filter(Transfer.velocity_flagged == True)
+        .join(Device, Device.id == Transfer.device_id)
+        .filter(*operational_filter, Transfer.velocity_flagged == True)
         .scalar() or 0
     )
     count_flagged = (
         db.query(func.count(Transfer.id))
-        .filter(Transfer.count_flagged == True)
+        .join(Device, Device.id == Transfer.device_id)
+        .filter(*operational_filter, Transfer.count_flagged == True)
         .scalar() or 0
     )
 
@@ -134,7 +190,9 @@ def get_analytics_overview(
     thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
     recent_recycling = (
         db.query(func.count(RecyclingRecord.id))
+        .join(Device, Device.id == RecyclingRecord.device_id)
         .filter(
+            *operational_filter,
             RecyclingRecord.recycling_status == "RECYCLED",
             RecyclingRecord.completion_date >= thirty_days_ago
         )
@@ -142,10 +200,23 @@ def get_analytics_overview(
     )
 
     # ── ON-CHAIN EVENT COUNTS ─────────────────────────────────────────────
-    total_chain_events = db.query(func.count(LedgerEvent.id)).scalar() or 0
+    total_chain_events = (
+        db.query(func.count(LedgerEvent.id))
+        .join(Device, Device.id == LedgerEvent.device_id)
+        .filter(*operational_filter)
+        .scalar() or 0
+    )
+    legacy_history_events = (
+        db.query(func.count(LedgerEvent.id))
+        .join(Device, Device.id == LedgerEvent.device_id)
+        .filter(legacy_filter)
+        .scalar() or 0
+    )
 
     event_type_counts = dict(
         db.query(LedgerEvent.event_type, func.count(LedgerEvent.id))
+        .join(Device, Device.id == LedgerEvent.device_id)
+        .filter(*operational_filter)
         .group_by(LedgerEvent.event_type)
         .all()
     )
@@ -160,7 +231,12 @@ def get_analytics_overview(
     # ── MARKETPLACE ───────────────────────────────────────────────────────
     devices_for_sale = (
         db.query(func.count(Device.id))
-        .filter(Device.is_for_sale == True, Device.stamp_valid == True)
+        .filter(
+            Device.is_for_sale == True,
+            Device.stamp_valid == True,
+            Device.registration_status == RegistrationStatus.CONFIRMED,
+            Device.identity_version == IdentityVersion.V2_PUBLIC_ID,
+        )
         .scalar() or 0
     )
 
@@ -169,6 +245,11 @@ def get_analytics_overview(
         # ── Summary ─────────────────────────────────────────────────────
         "summary": {
             "total_devices_registered": total_devices,
+            "legacy_test_records": legacy_test_devices,
+            "legacy_history_events": legacy_history_events,
+            "pending_registrations": pending_registrations,
+            "failed_registrations": failed_registrations,
+            "reconciliation_required": reconciliation_required,
             "active_devices": active_devices,
             "recycling_rate_percent": recycling_rate,
             "total_on_chain_events": total_chain_events,
@@ -249,15 +330,28 @@ def get_analytics_overview(
 @router.get("/lifecycle")
 def get_lifecycle_breakdown(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(RequireRole([UserRole.ADMIN]))
 ):
     """
     Detailed per-brand and per-state breakdown.
     Useful for regulator drill-down by brand category.
     """
     # Per-brand device counts
+    lifecycle_legacy_filter = or_(
+        Device.identity_version == IdentityVersion.V1_LEGACY,
+        Device.registration_status == RegistrationStatus.LEGACY_TEST,
+    )
+    legacy_test_devices = (
+        db.query(func.count(Device.id))
+        .filter(lifecycle_legacy_filter)
+        .scalar() or 0
+    )
     brand_counts = (
         db.query(Device.brand_name, func.count(Device.id))
+        .filter(
+            Device.identity_version == IdentityVersion.V2_PUBLIC_ID,
+            Device.registration_status == RegistrationStatus.CONFIRMED,
+        )
         .group_by(Device.brand_name)
         .order_by(func.count(Device.id).desc())
         .all()
@@ -266,7 +360,11 @@ def get_lifecycle_breakdown(
     # Per-brand recycling counts
     brand_recycled = (
         db.query(Device.brand_name, func.count(Device.id))
-        .filter(Device.status == DeviceStatus.RECYCLED)
+        .filter(
+            Device.status == DeviceStatus.RECYCLED,
+            Device.identity_version == IdentityVersion.V2_PUBLIC_ID,
+            Device.registration_status == RegistrationStatus.CONFIRMED,
+        )
         .group_by(Device.brand_name)
         .all()
     )
@@ -287,16 +385,25 @@ def get_lifecycle_breakdown(
     # Stamp validity
     valid_stamps = (
         db.query(func.count(Device.id))
-        .filter(Device.stamp_valid == True)
+        .filter(
+            Device.stamp_valid == True,
+            Device.identity_version == IdentityVersion.V2_PUBLIC_ID,
+            Device.registration_status == RegistrationStatus.CONFIRMED,
+        )
         .scalar() or 0
     )
     invalid_stamps = (
         db.query(func.count(Device.id))
-        .filter(Device.stamp_valid == False)
+        .filter(
+            Device.stamp_valid == False,
+            Device.identity_version == IdentityVersion.V2_PUBLIC_ID,
+            Device.registration_status == RegistrationStatus.CONFIRMED,
+        )
         .scalar() or 0
     )
 
     return standard_response({
+        "legacy_test_records": legacy_test_devices,
         "by_brand": breakdown,
         "stamp_validity": {
             "stamp_valid": valid_stamps,
@@ -313,7 +420,7 @@ def get_lifecycle_breakdown(
 def get_recent_events(
     limit: int = 20,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(RequireRole([UserRole.ADMIN]))
 ):
     """
     Latest on-chain events mirrored from Algorand.
@@ -339,12 +446,20 @@ def get_recent_events(
         )
 
         device = db.query(Device).filter(Device.id == e.device_id).first()
+        identity_version = (
+            device.identity_version.value if device and hasattr(device.identity_version, "value")
+            else (str(device.identity_version) if device else None)
+        )
+        metadata = e.metadata_ if isinstance(e.metadata_, dict) else {}
+        historical_chain_id = metadata.get("public_id") if identity_version == IdentityVersion.V1_LEGACY.value else None
         results.append({
             "event_id": e.id,
             "device_id": device.public_id if device else None,
+            "identity_version": identity_version,
+            "historical_chain_id": historical_chain_id,
             "event_type": e.event_type,
             "actor_type": e.actor_type,
-            "chain_status": e.chain_status,
+            "chain_status": e.chain_status.value if hasattr(e.chain_status, "value") else e.chain_status,
             "tx_hash": e.tx_hash,
             "block_number": e.block_number,
             "timestamp": e.timestamp.isoformat() if e.timestamp else None,

@@ -12,6 +12,7 @@ from database import (
 )
 from auth import RequireRole, get_current_user
 from services.ledger_service import ledger_service
+from services.device_policy import require_confirmed_v2_device
 
 router = APIRouter(prefix="/recycling", tags=["Recycling"])
 logger = logging.getLogger("TraceLoop.Recycling")
@@ -47,11 +48,7 @@ def receive_device(
     device = db.query(Device).filter(Device.public_id == payload.device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found.")
-    if device.registration_status != RegistrationStatus.CONFIRMED:
-        raise HTTPException(
-            status_code=409,
-            detail="Device has no confirmed Phase 2 on-chain registration.",
-        )
+    require_confirmed_v2_device(device, "recycling receipt")
 
     if device.current_owner_id != current_user.id or device.status != DeviceStatus.TRANSFERRED:
         raise HTTPException(
@@ -105,11 +102,7 @@ def complete_recycling(
     device = db.query(Device).filter(Device.public_id == payload.device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found.")
-    if device.registration_status != RegistrationStatus.CONFIRMED:
-        raise HTTPException(
-            status_code=409,
-            detail="Device has no confirmed Phase 2 on-chain registration; recycling is blocked.",
-        )
+    require_confirmed_v2_device(device, "recycling completion")
 
     if device.status != DeviceStatus.TRANSFERRED:
         raise HTTPException(
