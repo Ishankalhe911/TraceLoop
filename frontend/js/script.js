@@ -894,7 +894,7 @@ async function loadDashboard() {
             <h3 style="margin-bottom:16px">Report a dispute</h3>
             <form id="dispute-form" class="form-grid">
               <label>Device ID <span class="req">*</span>
-              <input name="device_id" required placeholder="TL-BRAND-SERIAL"
+              <input name="device_id" required placeholder="e.g. TL-DELL-A1B2C3D4E5F60718293A4B5C"
                style="font-family:'Space Mono',monospace" 
                oninput="this.value = this.value.toUpperCase().replace(/[^A-Z0-9-]/g, '')">
               </label>
@@ -971,7 +971,7 @@ async function loadDashboard() {
             </p>
             <form id="stamp-form" class="form-grid" style="max-width:480px">
               <label>Device ID <span class="req">*</span>
-              <input name="device_id" required placeholder="TL-BRAND-SERIAL"
+              <input name="device_id" required placeholder="e.g. TL-DELL-A1B2C3D4E5F60718293A4B5C"
               style="font-family:'Space Mono',monospace" 
                oninput="this.value = this.value.toUpperCase().replace(/[^A-Z0-9-]/g, '')">
               </label>
@@ -1156,6 +1156,7 @@ async function loadMyDevices() {
     el.innerHTML = list.length
       ? list.map(x => {
           const stampValid = !!x.stamp_valid;
+          const legacyTest = x.is_legacy_test === true || x.registration_status === 'LEGACY_TEST';
           const terminal = ['RECYCLED', 'EXPORTED'].includes(
             String(x.status || '').toUpperCase()
           );
@@ -1180,17 +1181,25 @@ async function loadMyDevices() {
                 )}
               </p>
 
-              <p class="muted" style="font-size:.78rem;margin-top:4px">
-                Stamp:
-                ${
-                  stampValid
-                    ? '<span style="color:var(--green)">✓ Valid</span>'
-                    : '<span style="color:var(--red)">✗ Invalid — re-verify first</span>'
-                }
-              </p>
+              ${legacyTest ? `
+                <div class="notice warning" style="margin-top:10px;padding:10px 12px;font-size:.78rem">
+                  Legacy test passport — read-only historical record. Its generated Phase 2 public ID was not registered on-chain.
+                </div>
+              ` : ''}
+
+              ${!legacyTest ? `
+                <p class="muted" style="font-size:.78rem;margin-top:4px">
+                  Stamp:
+                  ${
+                    stampValid
+                      ? '<span style="color:var(--green)">✓ Valid</span>'
+                      : '<span style="color:var(--red)">✗ Invalid — re-verify first</span>'
+                  }
+                </p>
+              ` : ''}
 
               ${
-                !stampValid && !terminal
+                !legacyTest && !stampValid && !terminal
                   ? `
                     <div class="notice warning"
                          style="margin-top:10px;padding:10px 12px;font-size:.78rem">
@@ -1208,6 +1217,7 @@ async function loadMyDevices() {
                   View passport
                 </a>
 
+                ${!legacyTest ? `
                 <button
                   class="button secondary small"
                   data-hardware-change="${esc(x.device_id)}"
@@ -1252,6 +1262,8 @@ async function loadMyDevices() {
                   }>
                   Transfer
                 </button>
+                ` : '<span class="muted" style="font-size:.8rem">Read-only legacy test record</span>'}
+
 
               </div>
             </article>
@@ -2069,11 +2081,13 @@ async function loadIncoming() {
             <p class="muted" style="font-size:.82rem">From ${esc(x.from_user_id)} · ${fmtDate(x.initiated_at)}</p>
           </div>
           <div class="row-actions">
-            ${chip(x.status)}
-            ${x.status === 'PENDING'
-              ? `<button class="button primary small" data-accept="${esc(x.transfer_id)}">Accept</button>
-                 <button class="button ghost small"   data-cancel="${esc(x.transfer_id)}">Cancel</button>`
-              : ''
+            ${chip(x.is_legacy_test ? 'LEGACY_TEST' : x.status)}
+            ${x.is_legacy_test
+              ? '<span class="muted" style="font-size:.8rem">Read-only legacy test record</span>'
+              : x.status === 'PENDING'
+                ? `<button class="button primary small" data-accept="${esc(x.transfer_id)}">Accept</button>
+                   <button class="button ghost small" data-cancel="${esc(x.transfer_id)}">Cancel</button>`
+                : ''
             }
           </div>
         </article>`).join('')
@@ -2188,8 +2202,11 @@ async function loadPendingCompletion() {
             <p class="muted" style="font-size:.82rem">To ${esc(x.to_user_id)} · ${fmtDate(x.initiated_at)}</p>
           </div>
           <div class="row-actions">
-            ${chip(x.stamp_valid ? 'VERIFIED' : 'NEEDS STAMP')}
-            <button class="button primary small" data-complete="${esc(x.transfer_id)}">Complete transfer</button>
+            ${chip(x.is_legacy_test ? 'LEGACY_TEST' : (x.stamp_valid ? 'VERIFIED' : 'NEEDS STAMP'))}
+            ${x.is_legacy_test
+              ? '<span class="muted" style="font-size:.8rem">Read-only legacy test record</span>'
+              : `<button class="button primary small" data-complete="${esc(x.transfer_id)}">Complete transfer</button>`
+            }
           </div>
         </article>`).join('')
       : empty('Queue is clear', 'Transfers awaiting physical inspection appear here.');
@@ -2439,9 +2456,10 @@ async function loadAdminDisputes() {
 
           <div class="row-actions">
             ${chip(x.status)}
+            ${x.is_legacy_test ? '<span class="muted" style="font-size:.8rem">Legacy test · read-only</span>' : ''}
 
             ${
-              x.status === 'UNDER_REVIEW'
+              !x.is_legacy_test && x.status === 'UNDER_REVIEW'
                 ? `
                   <button
                     class="button danger small"
@@ -2453,7 +2471,7 @@ async function loadAdminDisputes() {
             }
 
             ${
-              x.status === 'OPEN'
+              !x.is_legacy_test && x.status === 'OPEN'
                 ? `
                   <button
                     class="button primary small"
@@ -2773,20 +2791,20 @@ async function loadAdminDevices() {
   try {
     const d = envelope(await api('/admin/devices'));
     const list = d.devices || d || [];
-    $('#cnt-devices').textContent = Array.isArray(list) ? list.length : (d.total ?? '—');
+    $('#cnt-devices').textContent = d.total ?? (Array.isArray(list) ? list.length : '—');
     el.innerHTML = list.length
       ? list.map(x => `
         <div class="transfer-row">
           <div>
-            <span class="mono">${esc(x.device_id || x.id)}</span>
+            <span class="mono">${esc(x.public_id || x.device_id)}</span>
             <h3>${esc(x.brand_name || x.brand || 'Device')}</h3>
             <p class="muted" style="font-size:.82rem">Owner: ${esc(x.current_owner_id || '—')} · ${fmtDate(x.registered_at)}</p>
           </div>
           <div class="row-actions">
             ${chip(x.status)}
-            <a class="button ghost small" href="track.html?id=${encodeURIComponent(x.device_id || x.id)}">Passport</a>
-            ${!['RECYCLED', 'EXPORTED'].includes(x.status)
-              ? `<button class="button danger small" data-export="${esc(x.device_id || x.id)}">Export</button>`
+            <a class="button ghost small" href="track.html?id=${encodeURIComponent(x.public_id || x.device_id)}">Passport</a>
+            ${x.registration_status === 'CONFIRMED' && !['RECYCLED', 'EXPORTED'].includes(x.status)
+              ? `<button class="button danger small" data-export="${esc(x.public_id || x.device_id)}">Export</button>`
               : ''}
           </div>
         </div>`).join('')
@@ -2853,6 +2871,13 @@ async function searchDevice() {
         </div>
         ${chip(d.status || d.db_status || 'UNKNOWN')}
       </div>
+
+      ${d.is_legacy_test ? `
+        <div class="notice warning" style="margin:14px 0;padding:12px 14px">
+          <strong>Legacy Test Passport — read-only.</strong>
+          This is a preserved historical test record. The generated Phase 2 public ID was not registered on-chain, so live chain state is not queried. Any event history shown here is the existing off-chain mirror.
+        </div>
+      ` : ''}
 
       <div class="stat-grid">
         <div><small>Database state</small><strong>${esc(d.status || d.db_status || '—')}</strong></div>
@@ -2965,11 +2990,34 @@ async function initTransfer() {
   });
 }
 
+const MARKETPLACE_BRAND_CODE_BY_LABEL = Object.freeze({
+  DL: 'DL', DELL: 'DL',
+  HP: 'HP',
+  LN: 'LN', LENOVO: 'LN',
+  AS: 'AS', ASUS: 'AS',
+  AC: 'AC', ACER: 'AC',
+  AP: 'AP', APPLE: 'AP',
+  MS: 'MS', MSI: 'MS',
+  SG: 'SG', SAMSUNG: 'SG',
+});
+
+function getMarketplaceListingBrandCode(listing) {
+  // Current API payloads provide `brand` as the display name. Accept `brand_code`
+  // and `brand_name` too so older/mixed API payloads remain filterable.
+  for (const value of [listing?.brand_code, listing?.brand_name, listing?.brand]) {
+    const key = String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (Object.prototype.hasOwnProperty.call(MARKETPLACE_BRAND_CODE_BY_LABEL, key)) {
+      return MARKETPLACE_BRAND_CODE_BY_LABEL[key];
+    }
+  }
+  return '';
+}
+
 function applyFilters() {
   let list = [...allListings];
   const brand = $('#filter-brand')?.value;
   const sort  = $('#filter-sort')?.value;
-  if (brand) list = list.filter(x => x.brand_code === brand || x.device_id?.includes(`-${brand}-`));
+  if (brand) list = list.filter(x => getMarketplaceListingBrandCode(x) === brand);
   if (sort === 'price-asc')  list.sort((a, b) => (a.asking_price || 0) - (b.asking_price || 0));
   if (sort === 'price-desc') list.sort((a, b) => (b.asking_price || 0) - (a.asking_price || 0));
   renderListings(list);
@@ -3080,29 +3128,22 @@ async function initRegisterDevice() {
     statusEl.textContent = 'Could not verify account status. Are you signed in?';
   }
 
-  // ── PREVIEW & SMART AUTO-FILL ──
-  function updatePreview() {
-    const code   = ($('#brand_code')?.value || '??').toUpperCase();
-    const serial = normalizeClientSerial($('#serial_raw')?.value) || 'SERIAL';
-    const el = $('#device-id-preview');
-    if (el) el.textContent = `TL-${code}-${serial}`;
-  }
+  // The public Passport ID is generated by the backend using a random suffix.
+  // Never preview an ID derived from the hardware serial.
+  const previewEl = $('#device-id-preview');
+  if (previewEl) previewEl.textContent = 'Generated after registration';
 
-  // Brand code → auto-fill brand name & Preview
+  // Brand code → auto-fill canonical display name.
   const brandNames = { DL:'Dell', HP:'HP', LN:'Lenovo', AS:'Asus', AC:'Acer', AP:'Apple', MS:'MSI', SG:'Samsung' };
   $('#brand_code')?.addEventListener('change', e => {
     $('#brand_name').value = brandNames[e.target.value] || '';
-    updatePreview();
   });
-
-  $('#serial_raw')?.addEventListener('input', updatePreview);
 
   // Smart auto-fill from notifications
   const urlParams = new URLSearchParams(window.location.search);
   const prefillSerial = urlParams.get('serial');
   if (prefillSerial && $('#serial_raw')) {
     $('#serial_raw').value = prefillSerial;
-    updatePreview(); 
     $('#serial_raw').style.boxShadow = "0 0 0 2px var(--green)";
     setTimeout(() => { $('#serial_raw').style.boxShadow = "none"; }, 1500);
   }
@@ -3154,7 +3195,6 @@ async function initRegisterDevice() {
       </div>`;
       toast(`Passport ${d.device_id} registered.`);
       mainForm.reset();
-      updatePreview();
       
     } catch (x) {
       // ── THE MAGIC UX FLOW: Intercept missing proof error ──
