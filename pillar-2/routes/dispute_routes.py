@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 
 from database import (
-    get_db, Device, DeviceStatus, User, UserRole,
+    get_db, Device, DeviceStatus, RegistrationStatus, User, UserRole,
     Dispute, DisputeStatus, DisputeType
 )
 from auth import get_current_user, RequireRole
@@ -39,6 +39,7 @@ def standard_response(data: dict = None, code: int = 200) -> dict:
 # --- PAYLOAD SCHEMAS ---
 
 class ReportDisputePayload(BaseModel):
+    # Public Passport ID; the route resolves it to Device.id before persistence.
     device_id: str
     dispute_type: DisputeType
     description: str = Field(..., min_length=10)
@@ -85,9 +86,14 @@ def report_dispute(
     Dispute goes to UNDER_REVIEW for admin to assess.
     Admin then calls POST /disputes/{id}/freeze to trigger on-chain action.
     """
-    device = db.query(Device).filter(Device.id == payload.device_id).first()
+    device = db.query(Device).filter(Device.public_id == payload.device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found.")
+    if device.registration_status != RegistrationStatus.CONFIRMED:
+        raise HTTPException(
+            status_code=409,
+            detail="Device has no confirmed Phase 2 on-chain registration; disputes are blocked.",
+        )
 
     # Block reports on terminal devices
     if device.status in [DeviceStatus.RECYCLED, DeviceStatus.EXPORTED]:
@@ -108,7 +114,7 @@ def report_dispute(
 
     # Check no OPEN or UNDER_REVIEW dispute already exists for this device
     existing = db.query(Dispute).filter(
-        Dispute.device_id == payload.device_id,
+        Dispute.device_id == device.id,
         Dispute.status.in_([DisputeStatus.OPEN, DisputeStatus.UNDER_REVIEW])
     ).first()
     if existing:
@@ -134,7 +140,7 @@ def report_dispute(
 
         return standard_response({
             "dispute_id": new_dispute.id,
-            "device_id": device.id,
+            "device_id": device.public_id,
             "status": DisputeStatus.UNDER_REVIEW,
             "message": "Report submitted. An admin will review and freeze the device "
                        "on-chain if the dispute is valid. Device remains active until then."
@@ -174,6 +180,11 @@ def freeze_device(
     device = db.query(Device).filter(Device.id == dispute.device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found.")
+    if device.registration_status != RegistrationStatus.CONFIRMED:
+        raise HTTPException(
+            status_code=409,
+            detail="Device has no confirmed Phase 2 on-chain registration; freeze is blocked.",
+        )
 
     # Re-check device isn't already frozen (race condition guard)
     if device.status == DeviceStatus.DISPUTED:
@@ -192,7 +203,7 @@ def freeze_device(
         # On-chain freeze — Pillar 1
         dispute_int = DISPUTE_TYPE_MAP.get(dispute.dispute_type, 5)
         chain_result = ledger_service.raise_dispute(
-            device_id=device.id,
+            public_id=device.public_id,
             dispute_type=dispute_int,
             raised_by_role="OPERATOR"
         )
@@ -209,7 +220,7 @@ def freeze_device(
 
         return standard_response({
             "dispute_id": dispute.id,
-            "device_id": device.id,
+            "device_id": device.public_id,
             "chain_tx_id": chain_result["tx_id"],
             "confirmed_round": chain_result.get("confirmed_round"),
             "message": "Device frozen on Algorand. Stamp invalidated. "
@@ -254,6 +265,11 @@ def resolve_dispute(
     device = db.query(Device).filter(Device.id == dispute.device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found.")
+    if device.registration_status != RegistrationStatus.CONFIRMED:
+        raise HTTPException(
+            status_code=409,
+            detail="Device has no confirmed Phase 2 on-chain registration; dispute resolution is blocked.",
+        )
 
     # Enforce contract rule: cannot resolve into terminal or disputed states
     if payload.resolved_state not in [
@@ -272,7 +288,7 @@ def resolve_dispute(
 
         # On-chain resolution — Pillar 1
         chain_result = ledger_service.resolve_dispute(
-            device_id=device.id,
+            public_id=device.public_id,
             resolved_state=state_int
         )
 
@@ -290,7 +306,7 @@ def resolve_dispute(
 
         return standard_response({
             "dispute_id": dispute.id,
-            "device_id": device.id,
+            "device_id": device.public_id,
             "new_device_state": payload.resolved_state,
             "stamp_valid": False,
             "chain_tx_id": chain_result["tx_id"],
@@ -318,12 +334,16 @@ def get_device_disputes(
     current_user: User = Depends(get_current_user)
 ):
     """Full dispute history for a device — permanently attached, never deleted."""
+    device = db.query(Device).filter(Device.public_id == device_id).first()
+    if device is None:
+        raise HTTPException(status_code=404, detail="Device not found.")
+
     disputes = db.query(Dispute).filter(
-        Dispute.device_id == device_id
+        Dispute.device_id == device.id
     ).order_by(Dispute.created_at.desc()).all()
 
     return standard_response({
-        "device_id": device_id,
+        "device_id": device.public_id,
         "disputes": [
             {
                 "dispute_id": d.id,
@@ -354,7 +374,7 @@ def get_my_disputes(
         device = db.query(Device).filter(Device.id == d.device_id).first()
         results.append({
             "dispute_id": d.id,
-            "device_id": d.device_id,
+            "device_id": device.public_id if device else None,
             "brand_name": device.brand_name if device else "Unknown",
             "dispute_type": d.dispute_type,
             "description": d.description,
@@ -386,7 +406,7 @@ def get_open_disputes(
         device = db.query(Device).filter(Device.id == d.device_id).first()
         results.append({
             "dispute_id": d.id,
-            "device_id": d.device_id,
+            "device_id": device.public_id if device else None,
             "brand_name": device.brand_name if device else "Unknown",
             "current_device_status": device.status if device else "UNKNOWN",
             "current_config": device.current_config if device else {},

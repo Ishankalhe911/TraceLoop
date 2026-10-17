@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from database import (
-    get_db, Device, DeviceStatus, User, UserRole,
+    get_db, Device, DeviceStatus, RegistrationStatus, User, UserRole,
     RecyclingRecord, RecyclingStatus, Transfer, TransferStatus,
     RewardPoint
 )
@@ -44,9 +44,14 @@ def receive_device(
     Step 1: Recycler acknowledges physical receipt.
     Purely off-chain logistical tracking — no blockchain call.
     """
-    device = db.query(Device).filter(Device.id == payload.device_id).first()
+    device = db.query(Device).filter(Device.public_id == payload.device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found.")
+    if device.registration_status != RegistrationStatus.CONFIRMED:
+        raise HTTPException(
+            status_code=409,
+            detail="Device has no confirmed Phase 2 on-chain registration.",
+        )
 
     if device.current_owner_id != current_user.id or device.status != DeviceStatus.TRANSFERRED:
         raise HTTPException(
@@ -77,7 +82,7 @@ def receive_device(
         db.commit()
 
         return standard_response({
-            "device_id": device.id,
+            "device_id": device.public_id,
             "logistical_status": record.recycling_status,
             "message": "Physical receipt logged. Ready for recycling processing."
         })
@@ -97,9 +102,14 @@ def complete_recycling(
     Step 2: Recycler permanently terminates the device on Algorand.
     Generates CPCB-compliant certificate and distributes Eco Points.
     """
-    device = db.query(Device).filter(Device.id == payload.device_id).first()
+    device = db.query(Device).filter(Device.public_id == payload.device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found.")
+    if device.registration_status != RegistrationStatus.CONFIRMED:
+        raise HTTPException(
+            status_code=409,
+            detail="Device has no confirmed Phase 2 on-chain registration; recycling is blocked.",
+        )
 
     if device.status != DeviceStatus.TRANSFERRED:
         raise HTTPException(
@@ -120,14 +130,14 @@ def complete_recycling(
         certificate_id = f"TRC-CERT-{uuid.uuid4().hex[:8].upper()}"
 
         # Pre-flight chain check
-        if not ledger_service.can_recycle(device.id):
+        if not ledger_service.can_recycle(device.public_id):
             raise HTTPException(
                 status_code=409,
                 detail="Chain pre-check failed: device must be in TRANSFERRED state on-chain."
             )
 
         # Blockchain mutation (Pillar 1)
-        chain_result = ledger_service.mark_recycled(device_id=device.id)
+        chain_result = ledger_service.mark_recycled(public_id=device.public_id)
 
         # DB terminal state
         device.status = DeviceStatus.RECYCLED
@@ -189,7 +199,7 @@ def complete_recycling(
             logger.warning(f"Reward distribution failed for {device.id}: {e}")
 
         return standard_response({
-            "device_id": device.id,
+            "device_id": device.public_id,
             "status": "RECYCLED",
             "certificate_id": certificate_id,
             "chain_tx_id": chain_result["tx_id"],

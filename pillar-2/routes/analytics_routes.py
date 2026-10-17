@@ -338,9 +338,10 @@ def get_recent_events(
             if e.tx_hash else None
         )
 
+        device = db.query(Device).filter(Device.id == e.device_id).first()
         results.append({
             "event_id": e.id,
-            "device_id": e.device_id,
+            "device_id": device.public_id if device else None,
             "event_type": e.event_type,
             "actor_type": e.actor_type,
             "chain_status": e.chain_status,

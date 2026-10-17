@@ -133,7 +133,7 @@ def root():
             "service": "Trace-Loop Pillar 2",
             "version": "1.0.0",
             "network": "Algorand TestNet",
-            "app_id": os.getenv("APP_ID", "770956001"),
+            "app_id": os.getenv("APP_ID", "771258340"),
             "docs": "/docs"
         },
         "error": None,

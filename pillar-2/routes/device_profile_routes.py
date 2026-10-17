@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 # Import frozen models, RBAC, and Ledger Service
-from database import get_db, Device, DeviceHardwareLog, ChangeType, User, DeviceStatus
+from database import get_db, Device, DeviceHardwareLog, ChangeType, User, DeviceStatus, RegistrationStatus
 from auth import get_current_user
 from services.ledger_service import ledger_service
 
@@ -56,9 +56,14 @@ def declare_hardware_change(
     on-chain, appends the hardware log, and invalidates the current verification
     stamp so a service-center re-verification is required before resale.
     """
-    device = db.query(Device).filter(Device.id == device_id).first()
+    device = db.query(Device).filter(Device.public_id == device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found.")
+    if device.registration_status != RegistrationStatus.CONFIRMED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Device has no confirmed Phase 2 on-chain registration; hardware changes are blocked.",
+        )
 
     # Terminal state guard — no further hardware mutations are possible.
     if device.status in [DeviceStatus.RECYCLED, DeviceStatus.EXPORTED]:
@@ -131,7 +136,7 @@ def declare_hardware_change(
         # the business actor; the configured operator account commits the
         # protocol mutation to Algorand.
         chain_result = ledger_service.declare_hardware_change(
-            device_id=device.id,
+            public_id=device.public_id,
             new_config_hash=new_config_hash
         )
 
@@ -153,7 +158,7 @@ def declare_hardware_change(
         db.commit()
 
         return standard_response({
-            "device_id": device.id,
+            "device_id": device.public_id,
             "component": existing_key or component,
             "change_type": change_type.value,
             "old_spec": None if actual_old_spec is None else str(actual_old_spec),
@@ -179,12 +184,12 @@ def get_hardware_log(
     current_user: User = Depends(get_current_user)
 ):
     """Fetches the append-only hardware change log for a device."""
-    device = db.query(Device).filter(Device.id == device_id).first()
+    device = db.query(Device).filter(Device.public_id == device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found.")
 
     logs = db.query(DeviceHardwareLog).filter(
-        DeviceHardwareLog.device_id == device_id
+        DeviceHardwareLog.device_id == device.id
     ).order_by(DeviceHardwareLog.created_at.desc()).all()
 
     return standard_response({

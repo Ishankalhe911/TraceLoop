@@ -12,6 +12,7 @@ from database import (
     AdminActionType,
     Device,
     DeviceStatus,
+    RegistrationStatus,
     DocStatus,
     EvidenceRecord,
     EvidenceSubjectType,
@@ -716,28 +717,33 @@ def export_device(
     db: Session = Depends(get_db),
     current_user: User = Depends(RequireRole([UserRole.ADMIN])),
 ):
-    device = db.query(Device).filter(Device.id == device_id).first()
+    device = db.query(Device).filter(Device.public_id == device_id).first()
     if device is None:
         raise HTTPException(status_code=404, detail="Device not found.")
+    if device.registration_status != RegistrationStatus.CONFIRMED:
+        raise HTTPException(
+            status_code=409,
+            detail="Device has no confirmed Phase 2 on-chain registration; export is blocked.",
+        )
     if device.status in {DeviceStatus.RECYCLED, DeviceStatus.EXPORTED}:
         raise HTTPException(status_code=409, detail=f"Device is already in terminal state: {device.status.value}.")
 
     try:
-        chain_result = ledger_service.mark_exported(device_id=device_id)
+        chain_result = ledger_service.mark_exported(public_id=device.public_id)
         device.status = DeviceStatus.EXPORTED
         device.stamp_valid = False
         db.add(
             AdminAction(
                 admin_id=current_user.id,
                 action_type=AdminActionType.REVOKE,
-                target_device_id=device_id,
+                target_device_id=device.id,
                 notes=(payload.notes or "Device exported by administrator.")[:4000],
             )
         )
         db.commit()
         return standard_response(
             {
-                "device_id": device_id,
+                "device_id": device.public_id,
                 "status": DeviceStatus.EXPORTED.value,
                 "chain_tx_id": chain_result["tx_id"],
                 "message": "Device permanently exported on-chain.",
@@ -763,7 +769,7 @@ def get_all_devices(
             "total": len(devices),
             "devices": [
                 {
-                    "device_id": device.id,
+                    "device_id": device.public_id,
                     "brand": device.brand_name,
                     "status": device.status.value,
                     "stamp_valid": device.stamp_valid,

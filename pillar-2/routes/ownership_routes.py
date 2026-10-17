@@ -4,7 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from typing import Optional
-from database import get_db, Device, Transfer, User, UserRole, DeviceStatus, TransferStatus, UserStatus
+from database import (
+    get_db, Device, Transfer, User, UserRole, DeviceStatus, TransferStatus,
+    UserStatus, RegistrationStatus, LedgerEvent, ChainStatus
+)
+from services.ledger_service import LedgerSubmissionError
 from auth import get_current_user, RequireRole
 from services.ledger_service import ledger_service
 
@@ -43,20 +47,33 @@ def verify_stamp_validity(device: Device, db: Session):
             detail="Device does not have an active verification stamp. "
             "A VERIFIABLE node must re-audit this device before it can be transferred."
         )
-    if device.last_verified_at:
-        verified_at = make_aware(device.last_verified_at)
-        ttl_expiry = verified_at + timedelta(days=7)
-
-        if datetime.now(timezone.utc) > ttl_expiry:
-            # Auto-expire the stamp and pull off market
-            device.stamp_valid = False
-            device.is_for_sale = False
+    if not device.last_verified_at:
+        # A valid flag without a timestamp cannot establish that the 7-day TTL is met.
+        device.stamp_valid = False
+        device.is_for_sale = False
+        try:
             db.commit()
-            raise HTTPException(
-                status_code=400,
-                detail="Verification stamp expired (older than 7 days). "
-                "Device must be re-audited by a Service Center before transfer."
-            )
+        except Exception:
+            db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail="Verification timestamp is missing. Device must be re-audited before transfer."
+        )
+
+    verified_at = make_aware(device.last_verified_at)
+    ttl_expiry = verified_at + timedelta(days=7)
+    if datetime.now(timezone.utc) > ttl_expiry:
+        device.stamp_valid = False
+        device.is_for_sale = False
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail="Verification stamp expired (older than 7 days). "
+            "Device must be re-audited by a Service Center before transfer."
+        )
 
 
 # --- PAYLOAD SCHEMAS ---
@@ -84,7 +101,7 @@ def list_device_for_sale(
     Device must have a valid, unexpired verification stamp.
     Listing is purely off-chain — no blockchain call needed.
     """
-    device = db.query(Device).filter(Device.id == device_id).first()
+    device = db.query(Device).filter(Device.public_id == device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found.")
     if device.current_owner_id != current_user.id:
@@ -98,7 +115,7 @@ def list_device_for_sale(
     db.commit()
 
     return standard_response({
-        "device_id": device.id,
+        "device_id": device.public_id,
         "asking_price": payload.asking_price,
         "city": payload.city,
         "message": "Device listed on the public marketplace. "
@@ -113,7 +130,7 @@ def unlist_device(
     current_user: User = Depends(RequireRole([UserRole.FIRST_BUYER, UserRole.BUYER, UserRole.RESELLER]))
 ):
     """Owner removes their device from the marketplace."""
-    device = db.query(Device).filter(Device.id == device_id).first()
+    device = db.query(Device).filter(Device.public_id == device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found.")
     if device.current_owner_id != current_user.id:
@@ -123,7 +140,7 @@ def unlist_device(
     db.commit()
 
     return standard_response({
-        "device_id": device.id,
+        "device_id": device.public_id,
         "message": "Device removed from marketplace."
     })
 
@@ -136,24 +153,29 @@ def get_marketplace_listings_auth(
     Authenticated marketplace: returns seller phone numbers exclusively for logged-in users.
     DPDPA Compliant: PII is only exposed to verified accounts, not public scrapers.
     """
+    if current_user.status != UserStatus.ACTIVE:
+        raise HTTPException(status_code=403, detail="Account is not active.")
+
     devices = db.query(Device).filter(
-        Device.is_for_sale == True,
-        Device.stamp_valid == True
+        Device.is_for_sale.is_(True),
+        Device.stamp_valid.is_(True),
+        Device.registration_status == RegistrationStatus.CONFIRMED
     ).all()
 
     results = []
     for d in devices:
-        # Auto-expire stale stamps (READ ONLY - NO DB COMMITS HERE)
-        if d.last_verified_at:
-            verified_at = make_aware(d.last_verified_at)
-            if datetime.now(timezone.utc) > (verified_at + timedelta(days=7)):
-                continue
+        # Fail closed if a stamp timestamp is missing or older than the 7-day TTL.
+        if not d.last_verified_at:
+            continue
+        verified_at = make_aware(d.last_verified_at)
+        if datetime.now(timezone.utc) > (verified_at + timedelta(days=7)):
+            continue
 
         # Fetch the owner securely to attach their phone number
         owner = db.query(User).filter(User.id == d.current_owner_id).first()
         
         results.append({
-            "device_id": d.id,
+            "device_id": d.public_id,
             "brand": d.brand_name,
             "city": d.city,
             "asking_price": float(d.asking_price) if d.asking_price else None,
@@ -176,22 +198,22 @@ def get_marketplace_listings(db: Session = Depends(get_db)):
     The blockchain passport is shown — no PII or owner identity exposed.
     """
     devices = db.query(Device).filter(
-        Device.is_for_sale == True,
-        Device.stamp_valid == True
+        Device.is_for_sale.is_(True),
+        Device.stamp_valid.is_(True),
+        Device.registration_status == RegistrationStatus.CONFIRMED
     ).all()
 
     results = []
     for d in devices:
-        # Auto-expire stale stamps (READ ONLY - NO DB COMMITS HERE)
-        if d.last_verified_at:
-            verified_at = make_aware(d.last_verified_at)
-            # If stamp is older than 7 days, we simply skip showing it on the marketplace.
-            # We do NOT run db.commit() here anymore, protecting the database from crashing on reads.
-            if datetime.now(timezone.utc) > (verified_at + timedelta(days=7)):
-                continue
+        # Fail closed if a stamp timestamp is missing or older than the 7-day TTL.
+        if not d.last_verified_at:
+            continue
+        verified_at = make_aware(d.last_verified_at)
+        if datetime.now(timezone.utc) > (verified_at + timedelta(days=7)):
+            continue
 
         results.append({
-            "device_id": d.id,
+            "device_id": d.public_id,
             "brand": d.brand_name,
             "city": d.city,
             "asking_price": float(d.asking_price) if d.asking_price else None,
@@ -223,7 +245,7 @@ def initiate_transfer(
     Buyer ID is exchanged out-of-band (after seeing marketplace listing).
     Device is pulled off marketplace once P2P deal is initiated.
     """
-    device = db.query(Device).filter(Device.id == payload.device_id).first()
+    device = db.query(Device).filter(Device.public_id == payload.device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found.")
     if device.current_owner_id != current_user.id:
@@ -239,7 +261,7 @@ def initiate_transfer(
 
     # Check no active transfer already pending for this device
     existing = db.query(Transfer).filter(
-        Transfer.device_id == payload.device_id,
+        Transfer.device_id == device.id,
         Transfer.status.in_([TransferStatus.PENDING, TransferStatus.IN_PROGRESS])
     ).first()
     if existing:
@@ -277,7 +299,7 @@ def initiate_transfer(
 
     try:
         new_transfer = Transfer(
-            device_id=payload.device_id,
+            device_id=device.id,
             from_user_id=current_user.id,
             to_user_id=payload.to_user_id,
             status=TransferStatus.PENDING,
@@ -290,7 +312,7 @@ def initiate_transfer(
 
         return standard_response({
             "transfer_id": new_transfer.id,
-            "device_id": payload.device_id,
+            "device_id": device.public_id,
             "to_user_id": payload.to_user_id,
             "status": new_transfer.status,
             "velocity_flagged": velocity_flagged,
@@ -320,10 +342,9 @@ def get_incoming_transfers(
         device = db.query(Device).filter(Device.id == t.device_id).first()
         results.append({
             "transfer_id": t.id,
-            "device_id": t.device_id,
+            "device_id": device.public_id if device else None,
             "brand_name": device.brand_name if device else "Unknown Device",
             "current_config": device.current_config if device else {},
-            "from_user_id": t.from_user_id,
             "status": t.status,
             "initiated_at": make_aware(t.initiated_at).isoformat() if t.initiated_at else None
         })
@@ -348,12 +369,10 @@ def get_transfers_pending_completion(
         device = db.query(Device).filter(Device.id == t.device_id).first()
         results.append({
             "transfer_id": t.id,
-            "device_id": t.device_id,
+            "device_id": device.public_id if device else None,
             "brand_name": device.brand_name if device else "Unknown",
             "current_config": device.current_config if device else {},
             "stamp_valid": device.stamp_valid if device else False,
-            "from_user_id": t.from_user_id,
-            "to_user_id": t.to_user_id,
             "initiated_at": make_aware(t.initiated_at).isoformat() if t.initiated_at else None
         })
 
@@ -415,6 +434,14 @@ def cancel_transfer(
             detail="Only the seller or buyer can cancel this transfer."
         )
 
+    if getattr(transfer, "chain_attempt_status", None) in {
+        "SUBMISSION_STARTED", "SUBMISSION_UNKNOWN", "CONFIRMED_DB_PENDING"
+    }:
+        raise HTTPException(
+            status_code=409,
+            detail="Transfer has a chain attempt requiring reconciliation and cannot be cancelled automatically."
+        )
+
     if transfer.status == TransferStatus.COMPLETED:
         raise HTTPException(
             status_code=409,
@@ -435,7 +462,6 @@ def cancel_transfer(
     return standard_response({
         "transfer_id": transfer.id,
         "status": "CANCELLED",
-        "cancelled_by": current_user.id,
         "message": "Transfer cancelled. Device is available. "
         "Re-list via POST /transfers/list/{device_id} if you want to sell again."
     })
@@ -470,85 +496,170 @@ def complete_transfer(
     if not device:
         raise HTTPException(status_code=404, detail="Device not found.")
 
+    if device.registration_status != RegistrationStatus.CONFIRMED:
+        raise HTTPException(
+            status_code=409,
+            detail="Device registration is not confirmed. Transfer is blocked pending reconciliation."
+        )
+
     # Stamp TTL check
     verify_stamp_validity(device, db)
 
     # Pre-flight: confirm transferable on-chain (free simulate)
-    if not ledger_service.can_transfer(device.id):
+    if not ledger_service.can_transfer(device.public_id):
         raise HTTPException(
             status_code=409,
             detail="Chain pre-check failed: device is not in a transferable state on-chain. "
             "Stamp may be invalid or state machine is in wrong state."
         )
 
-    # Lock new_owner_hash to the approved buyer — computed from DB, not from request
-    # Verifier mathematically cannot redirect to any other address
+    # Lock the new owner hash to the buyer approved in the database, never request input.
     new_owner_hash = generate_sha256(transfer.to_user_id)
 
-    try:
-        # Chain first — Pillar 1
-        chain_result = ledger_service.transfer_device(
-            device_id=device.id,
-            new_owner_hash=new_owner_hash
+    # Do not retry a transfer whose prior attempt may have reached the chain.
+    if getattr(transfer, "chain_attempt_status", None) in {
+        "SUBMISSION_STARTED", "SUBMISSION_UNKNOWN", "CONFIRMED_DB_PENDING", "COMPLETED"
+    }:
+        raise HTTPException(
+            status_code=409,
+            detail="This transfer has a previous chain attempt requiring manual reconciliation. Do not retry."
         )
 
-        # DB after confirmation — Pillar 3
+    new_owner_hash = generate_sha256(transfer.to_user_id)
+    attempted_at = datetime.now(timezone.utc)
+
+    # Persist the attempt latch before calling the chain. This requires the companion
+    # migration adding the chain_attempt_* columns to transfers.
+    transfer.chain_attempt_status = "SUBMISSION_STARTED"
+    transfer.chain_attempted_at = attempted_at
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Could not record transfer attempt; no chain call was made.")
+
+    try:
+        chain_result = ledger_service.transfer_device(
+            public_id=device.public_id,
+            new_owner_hash=new_owner_hash,
+        )
+    except LedgerSubmissionError as exc:
+        db.rollback()
+        # Re-query and persist the result classification. Never automatically resubmit.
+        transfer = db.query(Transfer).filter(Transfer.id == transfer_id).first()
+        if transfer:
+            transfer.chain_attempt_status = (
+                "SUBMISSION_UNKNOWN" if exc.submission_attempted else "PRE_SUBMISSION_FAILED"
+            )
+            transfer.chain_error_code = exc.error_code
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
+        if exc.submission_attempted:
+            raise HTTPException(
+                status_code=409,
+                detail="Transfer outcome is uncertain. Manual reconciliation is required; do not retry."
+            )
+        raise HTTPException(status_code=502, detail="Ledger transaction was not submitted. Review the transfer before retrying.")
+    except Exception:
+        db.rollback()
+        transfer = db.query(Transfer).filter(Transfer.id == transfer_id).first()
+        if transfer:
+            transfer.chain_attempt_status = "SUBMISSION_UNKNOWN"
+            transfer.chain_error_code = "UNCLASSIFIED_LEDGER_EXCEPTION"
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Transfer outcome is uncertain. Manual reconciliation is required; do not retry."
+        )
+
+    # First persist chain confirmation metadata separately. If the later local ownership
+    # update fails, operators still have the tx id and confirmed round for reconciliation.
+    transfer.chain_attempt_status = "CONFIRMED_DB_PENDING"
+    transfer.chain_tx_id = chain_result.get("tx_id")
+    transfer.chain_confirmed_round = chain_result.get("confirmed_round")
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Chain transfer confirmed but local confirmation metadata could not be committed. Manual reconciliation required."
+        )
+
+    try:
         device.current_owner_id = transfer.to_user_id
         device.current_owner_hash = new_owner_hash
         device.status = DeviceStatus.TRANSFERRED
-        device.stamp_valid = False  # Must be re-verified before next transfer
+        device.stamp_valid = False
+        device.is_for_sale = False
 
         transfer.status = TransferStatus.COMPLETED
         transfer.verifier_id = current_user.id
         transfer.completed_at = datetime.now(timezone.utc)
-
+        transfer.chain_attempt_status = "COMPLETED"
         db.commit()
-
-        return standard_response({
-            "transfer_id": transfer.id,
-            "device_id": device.id,
-            "new_owner_id": transfer.to_user_id,
-            "chain_tx_id": chain_result["tx_id"],
-            "confirmed_round": chain_result["confirmed_round"],
-            "status": "COMPLETED",
-            "message": "Ownership transferred on Algorand TestNet. Device passport updated."
-        })
-
-    except Exception as e:
+    except Exception:
         db.rollback()
+        # The chain is already confirmed; leave the attempt latched for manual recovery.
         raise HTTPException(
-            status_code=500,
-            detail=f"Ledger execution failed: {str(e)}"
+            status_code=409,
+            detail="Chain transfer confirmed but local ownership update failed. Manual reconciliation required; do not retry."
         )
+
+    return standard_response({
+        "transfer_id": transfer.id,
+        "device_id": device.public_id,
+        "chain_tx_id": chain_result.get("tx_id"),
+        "confirmed_round": chain_result.get("confirmed_round"),
+        "status": "COMPLETED",
+        "message": "Ownership transfer confirmed on Algorand; local passport updated.",
+    })
 
 
 @router.get("/device/{device_id}")
 def get_device_transfer_history(
     device_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
 ):
-    """Full transfer history for a device — the ownership chain proof."""
-    transfers = db.query(Transfer).filter(
-        Transfer.device_id == device_id
-    ).order_by(Transfer.initiated_at.desc()).all()
+    """Public-safe lifecycle timeline from confirmed ledger mirror events only.
+
+    ``device_id`` is the public Passport ID. This sanitized timeline is intentionally
+    public; private Transfer workflow rows are never used as its source. Only allowlisted
+    event fields are returned.
+    """
+    device = db.query(Device).filter(Device.public_id == device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found.")
+
+    events = (
+        db.query(LedgerEvent)
+        .filter(
+            LedgerEvent.device_id == device.id,
+            LedgerEvent.chain_status == ChainStatus.CONFIRMED,
+        )
+        .order_by(LedgerEvent.timestamp.desc())
+        .all()
+    )
 
     history = []
-    for t in transfers:
+    for event in events:
+        # Never expose raw event metadata, actor IDs, or serial-related fields.
         history.append({
-            "transfer_id": t.id,
-            "from_user_id": t.from_user_id,
-            "to_user_id": t.to_user_id,
-            "verifier_id": t.verifier_id,
-            "status": t.status,
-            "velocity_flagged": t.velocity_flagged,
-            "count_flagged": t.count_flagged,
-            "initiated_at": make_aware(t.initiated_at).isoformat() if t.initiated_at else None,
-            "completed_at": make_aware(t.completed_at).isoformat() if t.completed_at else None
+            "event_type": event.event_type,
+            "transaction_id": event.tx_hash,
+            "confirmed_round": event.block_number,
+            "timestamp": make_aware(event.confirmed_at or event.timestamp).isoformat()
+                if (event.confirmed_at or event.timestamp) else None,
         })
 
     return standard_response({
-        "device_id": device_id,
-        "total_transfers": len(history),
-        "history": history
+        "device_id": device.public_id,
+        "brand": device.brand_name,
+        "total_events": len(history),
+        "history": history,
     })
