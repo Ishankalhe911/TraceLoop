@@ -21,7 +21,7 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "gemini-3.8-flash"
+DEFAULT_MODEL = "gemini-3.5-flash-lite"
 ALLOWED_RECONCILIATION_STATUSES = {
     "MATCH",
     "CONFLICT",
