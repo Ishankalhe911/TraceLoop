@@ -199,9 +199,40 @@ class PassportExplanationService:
                     while len(_CACHE) > _CACHE_MAX_ITEMS:
                         _CACHE.popitem(last=False)
             return result
+        except requests.HTTPError as exc:
+            response = exc.response
+            http_status = getattr(response, "status_code", None)
+            api_status = "-"
+            api_message = "-"
+
+            if response is not None:
+                try:
+                    body = response.json()
+                    error = body.get("error", {}) if isinstance(body, dict) else {}
+
+                    if isinstance(error, dict):
+                        api_status = str(error.get("status") or "-")[:80]
+
+                        message = error.get("message")
+                        if isinstance(message, str):
+                            api_message = " ".join(message.split())[:300] or "-"
+                except (ValueError, AttributeError):
+                    pass
+
+            logger.warning(
+                "Gemini passport explanation HTTP failure "
+                "(http_status=%s api_status=%s api_message=%s)",
+                http_status,
+                api_status,
+                api_message,
+            )
+            return self._fallback(facts, "generation_failed")
+
         except Exception as exc:
-            # Provider messages can contain request details; log only exception type.
-            logger.warning("Gemini passport explanation failed (exception_type=%s)", type(exc).__name__)
+            logger.warning(
+                "Gemini passport explanation failed (exception_type=%s)",
+                type(exc).__name__,
+            )
             return self._fallback(facts, "generation_failed")
 
     def _take_generation_slot(self) -> bool:
