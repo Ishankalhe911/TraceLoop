@@ -1,6 +1,7 @@
 """Public, read-only deterministic reconciliation for a TraceLoop passport."""
 from __future__ import annotations
-
+import logging
+import time
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -10,7 +11,7 @@ from services.passport_facts_service import PassportFactsService
 from services.passport_explanation_service import PassportExplanationService
 
 router = APIRouter(prefix="/passport-intelligence", tags=["Passport Intelligence"])
-
+logger = logging.getLogger(__name__)
 
 def _enum_value(value):
     return value.value if hasattr(value, "value") else value
@@ -47,7 +48,35 @@ def get_passport_intelligence(device_id: str, db: Session = Depends(get_db)):
     # The wording service is an implementation detail. Expose only the final
     # text to public clients, never provider/model/generation metadata. It cannot
     # alter the deterministic reconciliation status, checks, or lifecycle facts.
+        # Diagnose Gemini generation versus deterministic fallback.
+    explanation_started = time.monotonic()
+
     explanation_result = PassportExplanationService().explain(facts)
+
+    explanation_elapsed_ms = round(
+        (time.monotonic() - explanation_started) * 1000
+    )
+
+    if isinstance(explanation_result, dict):
+        provider = explanation_result.get("provider", "unknown")
+        generated = explanation_result.get("generated", False)
+        model = explanation_result.get("model") or "-"
+        fallback_reason = explanation_result.get("fallback_reason") or "-"
+    else:
+        provider = "invalid_result"
+        generated = False
+        model = "-"
+        fallback_reason = "unexpected_result_type"
+
+    logger.info(
+        "PASSPORT_EXPLANATION provider=%s generated=%s "
+        "model=%s fallback_reason=%s elapsed_ms=%s",
+        provider,
+        generated,
+        model,
+        fallback_reason,
+        explanation_elapsed_ms,
+    )
     explanation_text = (
         explanation_result.get("text")
         if isinstance(explanation_result, dict)
