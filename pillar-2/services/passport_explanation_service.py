@@ -15,6 +15,9 @@ import threading
 import time
 from collections import OrderedDict, deque
 from typing import Any, Callable, Dict, Optional
+from urllib.parse import quote
+
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +102,7 @@ class PassportExplanationService:
         model: Optional[str] = None,
         timeout_ms: Optional[int] = None,
         cache_ttl_seconds: Optional[int] = None,
-        client_factory: Optional[Callable[..., Any]] = None,
+        http_post: Optional[Callable[..., Any]] = None,
         max_calls_per_minute: Optional[int] = None,
     ) -> None:
         self.api_key = (api_key if api_key is not None else os.getenv("GEMINI_API_KEY", "")).strip()
@@ -109,7 +112,8 @@ class PassportExplanationService:
             0,
             int(cache_ttl_seconds if cache_ttl_seconds is not None else os.getenv("PASSPORT_GEMINI_CACHE_TTL_SECONDS", "300")),
         )
-        self.client_factory = client_factory
+        # Injectable for unit tests; production uses requests.post directly.
+        self.http_post = http_post or requests.post
         self.max_calls_per_minute = max(
             1,
             int(max_calls_per_minute if max_calls_per_minute is not None else os.getenv("PASSPORT_GEMINI_MAX_CALLS_PER_MINUTE", "30")),
@@ -139,21 +143,31 @@ class PassportExplanationService:
             return self._fallback(facts, "local_rate_limit")
 
         try:
-            client = self._make_client()
-            try:
-                response = client.models.generate_content(
-                    model=self.model,
-                    contents=(
-                        "Explain these precomputed facts in simple language. Do not decide status.\n"
-                        f"FACTS_JSON:\n{payload_text}"
-                    ),
-                    config=self._generation_config(),
-                )
-                generated_text = getattr(response, "text", None)
-            finally:
-                close = getattr(client, "close", None)
-                if callable(close):
-                    close()
+            model_path = quote(self.model, safe="-._")
+            endpoint = (
+                "https://generativelanguage.googleapis.com/v1beta/"
+                f"models/{model_path}:generateContent"
+            )
+            prompt = (
+                "Explain these precomputed facts in simple language. Do not decide status.\n"
+                f"FACTS_JSON:\n{payload_text}"
+            )
+            response = self.http_post(
+                endpoint,
+                headers={
+                    "Content-Type": "application/json",
+                    "x-goog-api-key": self.api_key,
+                },
+                json={
+                    "systemInstruction": {"parts": [{"text": SYSTEM_INSTRUCTION}]},
+                    "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                    "generationConfig": {"temperature": 0.2, "maxOutputTokens": 350},
+                },
+                timeout=max(0.1, self.timeout_ms / 1000.0),
+            )
+            response.raise_for_status()
+            response_data = response.json()
+            generated_text = self._extract_response_text(response_data)
 
             cleaned = self._validate_model_text(generated_text)
             if cleaned is None:
@@ -193,32 +207,25 @@ class PassportExplanationService:
             _RECENT_CALLS.append(now)
             return True
 
-    def _make_client(self):
-        if self.client_factory is not None:
-            return self.client_factory(api_key=self.api_key, timeout_ms=self.timeout_ms)
-
-        # Lazy import lets tests and no-key deployments use deterministic fallback
-        # even before the SDK is installed, though production installs requirements.
-        from google import genai
-        from google.genai import types
-
-        return genai.Client(
-            api_key=self.api_key,
-            http_options=types.HttpOptions(
-                timeout=self.timeout_ms,
-                retry_options=types.HttpRetryOptions(attempts=1),
-            ),
-        )
-
     @staticmethod
-    def _generation_config():
-        from google.genai import types
-
-        return types.GenerateContentConfig(
-            system_instruction=SYSTEM_INSTRUCTION,
-            temperature=0.2,
-            max_output_tokens=350,
-        )
+    def _extract_response_text(response_data: Any) -> Optional[str]:
+        """Extract candidate text without trusting arbitrary response fields."""
+        if not isinstance(response_data, dict):
+            return None
+        candidates = response_data.get("candidates")
+        if not isinstance(candidates, list) or not candidates:
+            return None
+        first = candidates[0]
+        if not isinstance(first, dict):
+            return None
+        content = first.get("content")
+        if not isinstance(content, dict):
+            return None
+        parts = content.get("parts")
+        if not isinstance(parts, list):
+            return None
+        text_parts = [part.get("text") for part in parts if isinstance(part, dict) and isinstance(part.get("text"), str)]
+        return "\n".join(text_parts) if text_parts else None
 
     @staticmethod
     def _validate_model_text(value: Any) -> Optional[str]:
