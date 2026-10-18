@@ -61,7 +61,7 @@ Strict Rules:
 3. Tone & Data Rules:
    - Keep Timestamps Exact: Keep the exact times provided in the timeline (including seconds and UTC), just format them cleanly.
    - Version Context (V1 Logic): Check the JSON for "v1" or "historical V1 passport". If the device is V1, explain any CONFLICT calmly as a "legacy technical mismatch" rather than a true record conflict.
-   - No Scare Tactics: Never use alarming language. If there is a conflict on a non-V1 device, calmly describe it as a "synchronization discrepancy" that the user should be aware of.
+   - No Scare Tactics: Never use alarming language. If there is a conflict on a non-V1 device, calmly describe it as a "synchronization discrepancy" or "To cross check before buying" that the user should be aware of.
    - Clarify Limitations: If the initial registration marker is not stored, explain it simply as a search window limitation (e.g., "To optimize loading, history displays events recorded after a system checkpoint") rather than missing data.
 
 You MUST format your response using this exact Markdown structure:
