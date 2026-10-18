@@ -44,10 +44,18 @@ def get_passport_intelligence(device_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Passport not found.")
 
     facts = PassportFactsService(db).build(device)
-    # Gemini only rewrites the already-computed public-safe facts. Its output
-    # cannot alter reconciliation status/checks, and deterministic wording is
-    # returned when the key is not configured or the provider fails.
-    facts["explanation"] = PassportExplanationService().explain(facts)
+    # The wording service is an implementation detail. Expose only the final
+    # text to public clients, never provider/model/generation metadata. It cannot
+    # alter the deterministic reconciliation status, checks, or lifecycle facts.
+    explanation_result = PassportExplanationService().explain(facts)
+    explanation_text = (
+        explanation_result.get("text")
+        if isinstance(explanation_result, dict)
+        else None
+    )
+    facts["explanation"] = {
+        "text": explanation_text or facts.get("summary") or "The passport explanation is unavailable right now."
+    }
     return {
         "status": "success",
         "code": 200,

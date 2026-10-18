@@ -2967,9 +2967,6 @@ function renderPassportIntelligence(facts) {
   const limitations = Array.isArray(facts?.limitations) ? facts.limitations : [];
   const explanation = facts?.explanation || {};
   const explanationText = explanation.text || facts.summary || 'No explanation was returned.';
-  const explanationLabel = explanation.provider === 'gemini' && explanation.generated
-    ? 'Gemini plain-language explanation'
-    : 'Rule-based explanation';
 
   const checksHtml = checks.length ? `
     <div class="passport-checks">
@@ -3013,9 +3010,8 @@ function renderPassportIntelligence(facts) {
         <strong>${esc(reconciliation.headline || 'Reconciliation result unavailable.')}</strong>
       </div>
       <section class="passport-explanation">
-        <div class="passport-explanation-label">${esc(explanationLabel)}</div>
+        <div class="passport-explanation-label">Explanation</div>
         <p class="passport-summary">${esc(explanationText)}</p>
-        ${explanation.provider === 'gemini' && explanation.generated ? '<small>Gemini explains precomputed facts only; it does not decide the reconciliation result.</small>' : ''}
       </section>
       ${checksHtml}
       <div class="section-label" style="margin-top:18px">Independent confirmed chain history</div>
