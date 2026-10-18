@@ -2968,6 +2968,28 @@ function renderPassportIntelligence(facts) {
   const explanation = facts?.explanation || {};
   const explanationText = explanation.text || facts.summary || 'No explanation was returned.';
 
+  // THE FIX: A mini-formatter to parse the AI's Markdown safely into UI elements
+  const formatMarkdown = text => {
+    if (!text) return '';
+    let safe = esc(text);
+
+    // Safety fallback: if backend collapsed newlines, inject them back before headers and bullets
+    safe = safe.replace(/###/g, '\n###').replace(/ \*/g, '\n*');
+
+    // Convert ### to styled H4 headers
+    safe = safe.replace(/\n*### (.*?)(?:\n|$)/g, '<h4 style="margin: 20px 0 10px 0; font-size: 1.1rem; color: var(--text); display: flex; align-items: center; gap: 6px;">$1</h4>');
+
+    // Convert **bold** to <strong>
+    safe = safe.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+
+    // Convert * bullets to styled div rows
+    safe = safe.replace(/\n\* (.*?)(?=\n|$)/g, '<div style="margin-left: 12px; padding: 4px 0; display: flex; align-items: flex-start; gap: 8px;"><span style="color: var(--muted)">•</span><span>$1</span></div>');
+
+    // Convert remaining single newlines to <br> for paragraph spacing
+    safe = safe.trim().replace(/\n/g, '<br>');
+    return safe;
+  };
+
   const checksHtml = checks.length ? `
     <div class="passport-checks">
       ${checks.map(check => `
@@ -2995,6 +3017,7 @@ function renderPassportIntelligence(facts) {
     ['Independent chain history', sources.independent_chain_history],
     ['Local event mirror', sources.database_event_mirror]
   ];
+
   const coverageHtml = `<div class="passport-source-grid">${coverage.map(([label, value]) => `
     <div><small>${esc(label)}</small><strong>${esc(value || 'UNKNOWN')}</strong></div>
   `).join('')}</div>`;
@@ -3009,10 +3032,15 @@ function renderPassportIntelligence(facts) {
         <span class="passport-check-status ${esc(statusClass(status))}">${esc(status)}</span>
         <strong>${esc(reconciliation.headline || 'Reconciliation result unavailable.')}</strong>
       </div>
+
+      <!-- AI Explanation injected with Markdown formatting -->
       <section class="passport-explanation">
         <div class="passport-explanation-label">Explanation</div>
-        <p class="passport-summary">${esc(explanationText)}</p>
+        <div class="passport-summary" style="line-height: 1.6; font-size: 0.95rem;">
+          ${formatMarkdown(explanationText)}
+        </div>
       </section>
+
       ${checksHtml}
       <div class="section-label" style="margin-top:18px">Independent confirmed chain history</div>
       ${timelineHtml}
