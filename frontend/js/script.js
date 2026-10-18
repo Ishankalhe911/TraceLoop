@@ -2968,26 +2968,83 @@ function renderPassportIntelligence(facts) {
   const explanation = facts?.explanation || {};
   const explanationText = explanation.text || facts.summary || 'No explanation was returned.';
 
-  // THE FIX: A mini-formatter to parse the AI's Markdown safely into UI elements
+  // Format Markdown safely, including escaped bullets and headings.
   const formatMarkdown = text => {
     if (!text) return '';
-    let safe = esc(text);
 
-    // Safety fallback: if backend collapsed newlines, inject them back before headers and bullets
-    safe = safe.replace(/###/g, '\n###').replace(/ \*/g, '\n*');
+    let normalized = String(text)
+      .replace(/\r\n?/g, '\n')
+      // Restore escaped Markdown characters such as \* and \#
+      .replace(/\\(?=[*#])/g, '')
+      // Remove stray backslashes at line ends
+      .replace(/\\[ \t]*(?=\n|$)/g, '')
+      // Restore literal escaped newline sequences
+      .replace(/\\n/g, '\n')
+      .replace(/\\r/g, '')
+      // Split headings that were returned on the same line as their content
+      .replace(/(#{1,6}\s+(?:📱\s*)?Device Passport Status)\s+/giu, '$1\n')
+      .replace(/(#{1,6}\s+(?:⏱️?\s*)?Lifecycle History)\s+/giu, '$1\n')
+      .replace(/(#{1,6}\s+(?:⚠️?\s*)?System Notes)\s+/giu, '$1\n')
+      // Restore line breaks before inline headings and Markdown bullets
+      .replace(/([^\n])\s+(?=#{1,6}\s)/g, '$1\n')
+      .replace(/([^\n])\s+(?=(?:\*\s+|•\s*|-\s+)\S)/g, '$1\n')
+      // A standalone bullet marker should attach to the following text
+      .replace(/^[ \t]*[*•-][ \t]*\n[ \t]*/gm, '* ')
+      .replace(/[ \t]*\n[ \t]*/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
 
-    // Convert ### to styled H4 headers
-    safe = safe.replace(/\n*### (.*?)(?:\n|$)/g, '<h4 style="margin: 20px 0 10px 0; font-size: 1.1rem; color: var(--text); display: flex; align-items: center; gap: 6px;">$1</h4>');
+    const formatInline = value =>
+      esc(value).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
 
-    // Convert **bold** to <strong>
-    safe = safe.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    const blocks = [];
+    let paragraph = [];
 
-    // Convert * bullets to styled div rows
-    safe = safe.replace(/\n\* (.*?)(?=\n|$)/g, '<div style="margin-left: 12px; padding: 4px 0; display: flex; align-items: flex-start; gap: 8px;"><span style="color: var(--muted)">•</span><span>$1</span></div>');
+    const flushParagraph = () => {
+      if (!paragraph.length) return;
 
-    // Convert remaining single newlines to <br> for paragraph spacing
-    safe = safe.trim().replace(/\n/g, '<br>');
-    return safe;
+      blocks.push(
+        `<p style="margin:0 0 12px;line-height:1.6;">${paragraph
+          .map(formatInline)
+          .join('<br>')}</p>`
+      );
+
+      paragraph = [];
+    };
+
+    for (const rawLine of normalized.split('\n')) {
+      const line = rawLine.trim();
+
+      if (!line) {
+        flushParagraph();
+        continue;
+      }
+
+      const heading = line.match(/^#{1,6}\s+(.+)$/);
+
+      if (heading) {
+        flushParagraph();
+        blocks.push(
+          `<h4 style="margin:20px 0 10px;font-size:1.1rem;color:var(--text);">${formatInline(heading[1])}</h4>`
+        );
+        continue;
+      }
+
+      const bullet = line.match(/^(?:[*•-])\s*(.+)$/);
+
+      if (bullet) {
+        flushParagraph();
+        blocks.push(
+          `<div style="margin-left:12px;padding:4px 0;display:flex;align-items:flex-start;gap:8px;"><span style="color:var(--muted);flex-shrink:0;">•</span><span>${formatInline(bullet[1])}</span></div>`
+        );
+        continue;
+      }
+
+      paragraph.push(line);
+    }
+
+    flushParagraph();
+    return blocks.join('');
   };
 
   const checksHtml = checks.length ? `
@@ -3033,10 +3090,9 @@ function renderPassportIntelligence(facts) {
         <strong>${esc(reconciliation.headline || 'Reconciliation result unavailable.')}</strong>
       </div>
 
-      <!-- AI Explanation injected with Markdown formatting -->
       <section class="passport-explanation">
         <div class="passport-explanation-label">Explanation</div>
-        <div class="passport-summary" style="line-height: 1.6; font-size: 0.95rem;">
+        <div class="passport-summary" style="line-height:1.6;font-size:0.95rem;">
           ${formatMarkdown(explanationText)}
         </div>
       </section>
