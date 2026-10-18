@@ -17,7 +17,6 @@ import base64
 import logging
 import os
 import re
-import struct
 import tempfile
 import time
 import uuid
@@ -25,12 +24,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from algosdk.encoding import checksum, encode_address
 from algosdk.v2client import indexer
 from sqlalchemy.exc import IntegrityError
 
 from database import ChainStatus, Device, LedgerEvent, SessionLocal
 from services.device_identity import is_public_id
+from services.arc28_event_decoder import (
+    ARC28_EVENTS,
+    decode_arc4_address,
+    decode_arc4_string,
+    decode_arc4_uint64,
+    decode_event_payload,
+    get_selector,
+)
 
 INDEXER_URL = os.getenv("INDEXER_URL", "https://testnet-idx.algonode.cloud")
 INDEXER_TOKEN = os.getenv("INDEXER_TOKEN", "")
@@ -41,133 +47,6 @@ WATERMARK_PATH = os.getenv("SUBSCRIBER_WATERMARK_PATH", "subscriber_watermark.tx
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("TraceLoopSubscriber")
-
-
-def get_selector(signature: str) -> bytes:
-    """Return the four-byte ARC-28 event selector (SHA-512/256 prefix)."""
-    return checksum(signature.encode("utf-8"))[:4]
-
-
-# --- PuyaPy ARC-4 event decoders ---
-# Dynamic string arguments use two-byte offsets in the ARC-4 tuple head; static
-# uint64/address arguments are inline. The decoder validates lengths and offsets
-# before slicing untrusted Indexer response data.
-
-
-def decode_arc4_string(data: bytes, offset: int) -> Tuple[str, int]:
-    """Decode a two-byte-length-prefixed UTF-8 string at offset."""
-    if offset < 0 or offset + 2 > len(data):
-        raise ValueError("ARC-4 string length prefix is out of bounds")
-    length = struct.unpack_from(">H", data, offset)[0]
-    value_start = offset + 2
-    value_end = value_start + length
-    if value_end > len(data):
-        raise ValueError("ARC-4 string value is truncated")
-    return data[value_start:value_end].decode("utf-8"), value_end
-
-
-def decode_arc4_uint64(data: bytes, offset: int) -> Tuple[int, int]:
-    """Decode a big-endian uint64 at offset."""
-    if offset < 0 or offset + 8 > len(data):
-        raise ValueError("ARC-4 uint64 is out of bounds")
-    return struct.unpack_from(">Q", data, offset)[0], offset + 8
-
-
-def decode_arc4_address(data: bytes, offset: int) -> Tuple[str, int]:
-    """Decode a 32-byte Algorand address at offset."""
-    if offset < 0 or offset + 32 > len(data):
-        raise ValueError("ARC-4 address is out of bounds")
-    return encode_address(data[offset:offset + 32]), offset + 32
-
-
-# Event name, event argument types, and mirrored event type. The signature
-# strings must match the event declarations in the deployed smart contract.
-ARC28_EVENTS = {
-    get_selector("DeviceRegistered(string,string,uint64)"): {
-        "name": "DeviceRegistered",
-        "args": ["string", "string", "uint64"],
-        "event_type": "REGISTERED",
-    },
-    get_selector("DeviceVerified(string,address,string,uint64)"): {
-        "name": "DeviceVerified",
-        "args": ["string", "address", "string", "uint64"],
-        "event_type": "VERIFIED",
-    },
-    get_selector("DeviceTransferred(string,string,address,uint64)"): {
-        "name": "DeviceTransferred",
-        "args": ["string", "string", "address", "uint64"],
-        "event_type": "TRANSFERRED",
-    },
-    get_selector("HardwareChangeDeclared(string,string,uint64)"): {
-        "name": "HardwareChangeDeclared",
-        "args": ["string", "string", "uint64"],
-        "event_type": "HARDWARE_CHANGED",
-    },
-    get_selector("DisputeRaised(string,address,uint64,uint64)"): {
-        "name": "DisputeRaised",
-        "args": ["string", "address", "uint64", "uint64"],
-        "event_type": "DISPUTED",
-    },
-    get_selector("DisputeResolved(string,uint64,uint64)"): {
-        "name": "DisputeResolved",
-        "args": ["string", "uint64", "uint64"],
-        "event_type": "DISPUTE_RESOLVED",
-    },
-    get_selector("DeviceRecycled(string,address,uint64)"): {
-        "name": "DeviceRecycled",
-        "args": ["string", "address", "uint64"],
-        "event_type": "RECYCLED",
-    },
-    get_selector("DeviceExported(string,uint64)"): {
-        "name": "DeviceExported",
-        "args": ["string", "uint64"],
-        "event_type": "EXPORTED",
-    },
-}
-
-
-def _arc4_head_size(arg_types: List[str]) -> int:
-    size = 0
-    for arg_type in arg_types:
-        if arg_type == "string":
-            size += 2
-        elif arg_type == "uint64":
-            size += 8
-        elif arg_type == "address":
-            size += 32
-        else:
-            raise ValueError(f"Unsupported ARC-28 event argument type: {arg_type}")
-    return size
-
-
-def decode_event_payload(arg_types: List[str], payload: bytes) -> List[Any]:
-    """Decode the known ARC-28 event tuple payload after its four-byte selector."""
-    head_size = _arc4_head_size(arg_types)
-    if len(payload) < head_size:
-        raise ValueError("ARC-4 event payload is shorter than its tuple head")
-
-    values: List[Any] = []
-    head_cursor = 0
-    for arg_type in arg_types:
-        if arg_type == "uint64":
-            value, head_cursor = decode_arc4_uint64(payload, head_cursor)
-            values.append(value)
-        elif arg_type == "address":
-            value, head_cursor = decode_arc4_address(payload, head_cursor)
-            values.append(value)
-        elif arg_type == "string":
-            offset = struct.unpack_from(">H", payload, head_cursor)[0]
-            head_cursor += 2
-            # Dynamic strings must point after the complete tuple head and into
-            # the payload. The decoder then verifies the length-prefixed tail.
-            if offset < head_size or offset >= len(payload):
-                raise ValueError("ARC-4 string offset is outside the event payload")
-            value, _ = decode_arc4_string(payload, offset)
-            values.append(value)
-        else:  # Defensive if the event table is extended incorrectly.
-            raise ValueError(f"Unsupported ARC-28 event argument type: {arg_type}")
-
-    return values
 
 
 class SubscriberDaemon:

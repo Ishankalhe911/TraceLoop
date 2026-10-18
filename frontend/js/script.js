@@ -2886,6 +2886,20 @@ async function searchDevice() {
 
       ${device.message && !isLegacy ? `<p class="notice info" style="margin:14px 0;padding:12px 14px">${esc(device.message)}</p>` : ''}
 
+      <section class="passport-intelligence panel" style="margin:18px 0;padding:18px">
+        <div class="panel-head">
+          <div>
+            <span class="eyebrow">Deterministic review</span>
+            <h3>Explain and reconcile this passport</h3>
+            <p class="muted" style="margin-top:5px">Compares the latest chain state, independently indexed lifecycle events, and the local record. It does not verify physical events by itself.</p>
+          </div>
+          <button class="button primary" type="button" id="passport-intelligence-button">Explain passport</button>
+        </div>
+        <div id="passport-intelligence-result" aria-live="polite">
+          <p class="muted">Run an on-demand consistency check to see the plain-language history and any source differences.</p>
+        </div>
+      </section>
+
       <div class="stat-grid">
         <div><small>Database state</small><strong>${esc(device.status || '—')}</strong></div>
         <div><small>Chain state</small><strong>${esc(device.chain_status || '—')}</strong></div>
@@ -2915,13 +2929,103 @@ async function searchDevice() {
       </div>
 
       <div class="ledger">
-        <div class="section-label">Ledger events</div>
+        <div class="section-label">Mirrored ledger events</div>
+        <p class="muted" style="margin:4px 0 12px">These are the local database mirror. The deterministic review above checks independently indexed chain history as a separate source.</p>
         ${renderEvents(events)}
       </div>
     `;
+
+    $('#passport-intelligence-button')?.addEventListener('click', () => loadPassportIntelligence(id));
   } catch (error) {
     result.innerHTML = empty('Passport unavailable', error.message || 'The passport could not be loaded.');
   }
+}
+
+async function loadPassportIntelligence(publicId) {
+  const button = $('#passport-intelligence-button');
+  const result = $('#passport-intelligence-result');
+  if (!button || !result) return;
+
+  setBusy(button, true, 'Checking sources and preparing explanation…');
+  result.innerHTML = '<div class="loading">Reading chain state and comparing confirmed history…</div>';
+  try {
+    const response = await api(`/passport-intelligence/${encodeURIComponent(publicId)}`, { auth: false });
+    result.innerHTML = renderPassportIntelligence(envelope(response));
+  } catch (error) {
+    result.innerHTML = `<p class="notice warning">${esc(error.message || 'The passport sources could not be compared right now.')}</p>`;
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+function renderPassportIntelligence(facts) {
+  const reconciliation = facts?.reconciliation || {};
+  const status = String(reconciliation.status || 'SOURCE_UNAVAILABLE').toUpperCase();
+  const checks = Array.isArray(reconciliation.checks) ? reconciliation.checks : [];
+  const timeline = Array.isArray(facts?.timeline) ? facts.timeline : [];
+  const sources = facts?.sources || {};
+  const limitations = Array.isArray(facts?.limitations) ? facts.limitations : [];
+  const explanation = facts?.explanation || {};
+  const explanationText = explanation.text || facts.summary || 'No explanation was returned.';
+  const explanationLabel = explanation.provider === 'gemini' && explanation.generated
+    ? 'Gemini plain-language explanation'
+    : 'Rule-based explanation';
+
+  const checksHtml = checks.length ? `
+    <div class="passport-checks">
+      ${checks.map(check => `
+        <div class="passport-check-row">
+          <div><strong>${esc(String(check.field || 'Field').replaceAll('_', ' '))}</strong><p>${esc(check.explanation || '')}</p></div>
+          <span class="passport-check-status ${esc(statusClass(check.result || 'not-comparable'))}">${esc(check.result || 'NOT_COMPARABLE')}</span>
+        </div>
+      `).join('')}
+    </div>
+  ` : '<p class="muted">No field-by-field comparison is available in this public view.</p>';
+
+  const timelineHtml = timeline.length ? `
+    <div class="passport-intelligence-timeline">
+      ${timeline.map(event => `
+        <div class="passport-intelligence-event">
+          <div><strong>${esc(event.event_type || 'Lifecycle event')}</strong><p>${esc(event.description || '')}</p><small>${fmtDate(event.timestamp)}${event.round != null ? ` · round ${esc(event.round)}` : ''}</small></div>
+          ${event.transaction_ref ? `<a href="https://lora.algokit.io/testnet/transaction/${encodeURIComponent(event.transaction_ref)}" target="_blank" rel="noopener">View transaction ↗</a>` : ''}
+        </div>
+      `).join('')}
+    </div>
+  ` : '<p class="muted">No public lifecycle event was returned for the scanned history window.</p>';
+
+  const coverage = [
+    ['Current chain state', sources.current_chain_state],
+    ['Independent chain history', sources.independent_chain_history],
+    ['Local event mirror', sources.database_event_mirror]
+  ];
+  const coverageHtml = `<div class="passport-source-grid">${coverage.map(([label, value]) => `
+    <div><small>${esc(label)}</small><strong>${esc(value || 'UNKNOWN')}</strong></div>
+  `).join('')}</div>`;
+
+  const limitationsHtml = limitations.length ? `
+    <div class="passport-limitations"><strong>Coverage notes</strong><ul>${limitations.map(note => `<li>${esc(note)}</li>`).join('')}</ul></div>
+  ` : '';
+
+  return `
+    <div class="passport-intelligence-body">
+      <div class="passport-reconciliation-head">
+        <span class="passport-check-status ${esc(statusClass(status))}">${esc(status)}</span>
+        <strong>${esc(reconciliation.headline || 'Reconciliation result unavailable.')}</strong>
+      </div>
+      <section class="passport-explanation">
+        <div class="passport-explanation-label">${esc(explanationLabel)}</div>
+        <p class="passport-summary">${esc(explanationText)}</p>
+        ${explanation.provider === 'gemini' && explanation.generated ? '<small>Gemini explains precomputed facts only; it does not decide the reconciliation result.</small>' : ''}
+      </section>
+      ${checksHtml}
+      <div class="section-label" style="margin-top:18px">Independent confirmed chain history</div>
+      ${timelineHtml}
+      <div class="section-label" style="margin-top:18px">Source coverage</div>
+      ${coverageHtml}
+      ${limitationsHtml}
+      <p class="muted" style="font-size:.78rem;margin-top:12px">Checked ${fmtDate(facts.checked_at)}. The reconciliation badge and field checks are determined by fixed backend rules. A ledger event proves that the event was recorded, not that the physical event was independently verified.</p>
+    </div>
+  `;
 }
 
 function renderEvents(list) {

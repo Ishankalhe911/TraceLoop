@@ -680,3 +680,35 @@ pre {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
 }
+/* ── Deterministic passport reconciliation (Phase 2.5) ───────── */
+.passport-intelligence .panel-head { align-items: center; }
+.passport-intelligence-body { margin-top: 16px; }
+.passport-reconciliation-head { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.passport-summary { line-height: 1.65; margin: 14px 0; max-width: 900px; }
+.passport-checks { display: grid; gap: 8px; margin-top: 14px; }
+.passport-check-row { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); }
+.passport-check-row p { color: var(--muted); font-size: .85rem; margin-top: 4px; line-height: 1.45; }
+.passport-check-status { display: inline-flex; flex-shrink: 0; align-items: center; border: 1px solid var(--border); border-radius: 999px; padding: 4px 9px; font-size: .72rem; font-weight: 700; letter-spacing: .025em; background: var(--grey-bg); color: var(--text); }
+.passport-check-status.match { background: var(--green-bg); border-color: var(--green); }
+.passport-check-status.conflict { background: var(--amber-bg); border-color: var(--amber); }
+.passport-check-status.pending-sync, .passport-check-status.source-unavailable, .passport-check-status.partial, .passport-check-status.offchain-only, .passport-check-status.chain-only { background: var(--grey-bg); }
+.passport-intelligence-timeline { display: grid; gap: 8px; }
+.passport-intelligence-event { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.passport-intelligence-event p { font-size: .85rem; color: var(--muted); margin: 3px 0; line-height: 1.45; }
+.passport-intelligence-event small { font-size: .75rem; color: var(--muted); }
+.passport-intelligence-event a { flex-shrink: 0; font-size: .8rem; }
+.passport-source-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
+.passport-source-grid > div { background: var(--grey-bg); border-radius: var(--radius); padding: 12px; }
+.passport-source-grid small, .passport-source-grid strong { display: block; }
+.passport-source-grid small { color: var(--muted); margin-bottom: 5px; }
+.passport-source-grid strong { font-size: .82rem; overflow-wrap: anywhere; }
+.passport-limitations { margin-top: 15px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); }
+.passport-limitations ul { margin: 6px 0 0 18px; color: var(--muted); font-size: .83rem; line-height: 1.5; }
+@media (max-width: 640px) {
+  .passport-check-row, .passport-intelligence-event { flex-direction: column; }
+  .passport-source-grid { grid-template-columns: 1fr; }
+}
+.passport-explanation { margin-top: 14px; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--grey-bg); }
+.passport-explanation-label { color: var(--muted); font-size: .73rem; font-weight: 750; letter-spacing: .04em; text-transform: uppercase; }
+.passport-explanation .passport-summary { margin: 8px 0 2px; }
+.passport-explanation small { color: var(--muted); font-size: .76rem; line-height: 1.4; }
