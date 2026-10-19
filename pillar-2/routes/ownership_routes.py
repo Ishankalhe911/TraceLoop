@@ -89,8 +89,8 @@ class ListDevicePayload(BaseModel):
     city: Optional[str] = Field(None, max_length=60)
 
 class InitiateTransferPayload(BaseModel):
-    device_id: str
-    to_user_id: str
+    device_id: str = Field(..., min_length=1, max_length=40)
+    to_user_id: str = Field(..., min_length=1, max_length=36)
 
 
 # --- MARKETPLACE ROUTES (Discovery) ---
@@ -261,14 +261,27 @@ def initiate_transfer(
     require_confirmed_registration(device, "transfer initiation")
     if device.current_owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="Only the current owner can initiate a transfer.")
-    if payload.to_user_id == current_user.id:
+    recipient_id = payload.to_user_id.strip()
+    if not recipient_id:
+        raise HTTPException(status_code=422, detail="A recipient TraceLoop ID is required.")
+    if recipient_id == current_user.id:
         raise HTTPException(status_code=400, detail="Cannot transfer device to yourself.")
 
     verify_stamp_validity(device, db)
 
-    receiver = db.query(User).filter(User.id == payload.to_user_id).first()
+    receiver = db.query(User).filter(User.id == recipient_id).first()
     if not receiver or receiver.status != UserStatus.ACTIVE:
         raise HTTPException(status_code=404, detail="Receiver not found or account is not active.")
+    if receiver.role not in {
+        UserRole.FIRST_BUYER,
+        UserRole.BUYER,
+        UserRole.RESELLER,
+        UserRole.RECYCLER,
+    }:
+        raise HTTPException(
+            status_code=422,
+            detail="Transfers may only be addressed to an active buyer, reseller, or recycler account.",
+        )
 
     # Check no active transfer already pending for this device
     existing = db.query(Transfer).filter(
@@ -299,7 +312,7 @@ def initiate_transfer(
     count_flagged = False
     if receiver.role == UserRole.BUYER:
         active_device_count = db.query(Device).filter(
-            Device.current_owner_id == payload.to_user_id,
+            Device.current_owner_id == recipient_id,
             Device.status.notin_([DeviceStatus.RECYCLED, DeviceStatus.EXPORTED])
         ).count()
         if active_device_count > 3:
@@ -312,7 +325,7 @@ def initiate_transfer(
         new_transfer = Transfer(
             device_id=device.id,
             from_user_id=current_user.id,
-            to_user_id=payload.to_user_id,
+            to_user_id=recipient_id,
             status=TransferStatus.PENDING,
             velocity_flagged=velocity_flagged,
             count_flagged=count_flagged
@@ -324,7 +337,7 @@ def initiate_transfer(
         return standard_response({
             "transfer_id": new_transfer.id,
             "device_id": device.public_id,
-            "to_user_id": payload.to_user_id,
+            "to_user_id": recipient_id,
             "status": new_transfer.status,
             "velocity_flagged": velocity_flagged,
             "count_flagged": count_flagged,

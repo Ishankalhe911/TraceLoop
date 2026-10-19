@@ -184,8 +184,10 @@ def send_otp(payload: OTPSendPayload, db: Session = Depends(get_db)):
     create_otp_session(phone=payload.phone, otp=otp, db=db)
     logger.info("OTP generated for registered phone account ending %s", payload.phone[-4:])
 
-    # Fast2SMS integration. Keep the dev OTP preview only when SMS is not confirmed sent.
+    # SMS fallback and OTP preview are separate decisions. A failed/missing SMS
+    # provider must not automatically disclose an OTP in production responses.
     fast2sms_key = os.getenv("FAST2SMS_API_KEY")
+    otp_preview_enabled = os.getenv("OTP_PREVIEW_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
     sms_sent_successfully = False
 
     if fast2sms_key:
@@ -209,12 +211,24 @@ def send_otp(payload: OTPSendPayload, db: Session = Depends(get_db)):
         except requests.RequestException:
             logger.exception("Fast2SMS request failed")
     else:
-        logger.warning("FAST2SMS_API_KEY is missing; OTP preview is enabled for development.")
+        logger.warning("FAST2SMS_API_KEY is missing; SMS delivery is unavailable.")
+
+    demo_preview_available = bool(not sms_sent_successfully and otp_preview_enabled)
+    if not sms_sent_successfully and not otp_preview_enabled:
+        logger.warning("OTP preview is disabled; configure SMS delivery or explicitly enable OTP_PREVIEW_ENABLED for a controlled demo.")
 
     return standard_response(
         {
-            "message": "OTP sent successfully." if sms_sent_successfully else "OTP created; SMS delivery was not confirmed.",
-            "otp_preview": otp if not sms_sent_successfully else None,
+            "message": (
+                "OTP sent successfully."
+                if sms_sent_successfully
+                else "Demo OTP generated; use the preview below."
+                if demo_preview_available
+                else "OTP was generated, but SMS delivery was not confirmed. Contact the administrator if you cannot receive the code."
+            ),
+            "otp_preview": otp if demo_preview_available else None,
+            "demo_otp_enabled": demo_preview_available,
+            "delivery_confirmed": sms_sent_successfully,
             "expires_in_minutes": 10,
         }
     )

@@ -516,6 +516,14 @@ class RecyclingRecord(Base):
     received_date = Column(DateTime(timezone=True), nullable=True)
     completion_date = Column(DateTime(timezone=True), nullable=True)
 
+    # Durable ledger-attempt latch. An uncertain chain submission must never be
+    # retried automatically; it requires explicit reconciliation just like transfers.
+    chain_attempt_status = Column(String(32), nullable=True, index=True)
+    chain_attempted_at = Column(DateTime(timezone=True), nullable=True)
+    chain_tx_id = Column(String(80), nullable=True, index=True)
+    chain_confirmed_round = Column(BigInteger, nullable=True)
+    chain_error_code = Column(String(60), nullable=True)
+
 
 # --- 7. PHASE 1 PRIVATE EVIDENCE MODELS (Pillar 2) ---
 class EvidenceType(str, enum.Enum):

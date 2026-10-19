@@ -92,7 +92,7 @@ ALLOWED_ORIGINS = [
     origin.strip() 
     for origin in os.getenv(
         "ALLOWED_ORIGINS", 
-        "http://localhost:3000,https://traceloop-beta.vercel.app"
+        "http://localhost:3000,http://localhost:5173,https://traceloop-beta.vercel.app"
     ).split(",") 
     if origin.strip()
 ]

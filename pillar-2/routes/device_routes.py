@@ -26,6 +26,10 @@ from auth import RequireRole, get_current_user
 from database import (
     DocStatus,
     DocType,
+    EvidenceRecord,
+    EvidenceSubjectType,
+    EvidenceType,
+    EvidenceVerificationStatus,
     ChainStatus,
     Device,
     DeviceStatus,
@@ -504,6 +508,53 @@ def register_device(
         },
         status.HTTP_201_CREATED,
     )
+
+
+@router.get("/registration-options")
+def get_registration_options(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(RequireRole([UserRole.FIRST_BUYER])),
+):
+    """Return only this user's approved, unregistered purchase-proof serials.
+
+    This endpoint is a UI convenience, not an authorization shortcut. The register
+    route continues to re-check the accepted proof and duplicate-device constraint.
+    No document path, file hash, reviewer note, or other user's data is returned.
+    """
+    from routes.evidence_routes import normalize_serial
+
+    candidate_serials: dict[str, str] = {}
+    legacy_docs = db.query(KYCDocument).filter(
+        KYCDocument.user_id == current_user.id,
+        KYCDocument.doc_type == DocType.PURCHASE_PROOF,
+        KYCDocument.status == DocStatus.ACCEPTED,
+        KYCDocument.serial_for_device.isnot(None),
+    ).all()
+    for doc in legacy_docs:
+        serial = normalize_serial(doc.serial_for_device)
+        if serial:
+            candidate_serials.setdefault(serial, "APPROVED_PURCHASE_PROOF")
+
+    evidence_rows = db.query(EvidenceRecord).filter(
+        EvidenceRecord.user_id == current_user.id,
+        EvidenceRecord.evidence_type == EvidenceType.PURCHASE_PROOF,
+        EvidenceRecord.subject_type == EvidenceSubjectType.DEVICE_CLAIM,
+        EvidenceRecord.verification_status == EvidenceVerificationStatus.VERIFIED,
+    ).all()
+    for evidence in evidence_rows:
+        serial = normalize_serial(evidence.subject_id)
+        if serial:
+            candidate_serials.setdefault(serial, "APPROVED_PURCHASE_PROOF")
+
+    options = []
+    for serial, source in sorted(candidate_serials.items()):
+        serial_hash = generate_sha256(serial)
+        registered = db.query(Device.id).filter(
+            (Device.serial_hash == serial_hash) | (Device.serial_raw == serial)
+        ).first()
+        if not registered:
+            options.append({"serial_for_device": serial, "source": source})
+    return standard_response({"total": len(options), "options": options})
 
 
 @router.get("/my-devices")
