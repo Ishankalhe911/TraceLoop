@@ -23,6 +23,8 @@ from routes.device_profile_routes import router as device_profile_router
 from routes.manufacturer_routes import router as manufacturer_router
 from routes.analytics_routes import router as analytics_router
 from routes.passport_intelligence_routes import router as passport_intelligence_router
+from routes.notification_routes import router as notification_router
+from routes.reward_points_routes import router as reward_points_router
 
 
 logging.basicConfig(
@@ -119,6 +121,8 @@ app.include_router(admin_router)
 app.include_router(evidence_router)
 app.include_router(analytics_router)
 app.include_router(passport_intelligence_router)
+app.include_router(notification_router)
+app.include_router(reward_points_router)
 
 # Device Intelligence (Pillar 3)
 app.include_router(device_profile_router)

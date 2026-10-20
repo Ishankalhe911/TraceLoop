@@ -246,6 +246,28 @@ class JWTSession(Base):
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
 
+class Notification(Base):
+    """Persisted, user-scoped lifecycle updates shown in the notification centre.
+
+    Notifications are created only when a new workflow transition completes; the
+    UI does not backfill old historical transactions as unread notifications.
+    """
+
+    __tablename__ = "notifications"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    notification_type = Column(String(48), nullable=False)
+    title = Column(String(140), nullable=False)
+    message = Column(String(600), nullable=False)
+    action_path = Column(String(300), nullable=True)
+    public_device_id = Column(String(40), nullable=True, index=True)
+    entity_id = Column(String(36), nullable=True)
+    dedupe_key = Column(String(200), nullable=True, unique=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False, index=True)
+    read_at = Column(DateTime(timezone=True), nullable=True)
+
+
 # --- 3. DEVICE INTELLIGENCE MODELS (Pillar 3) ---
 class Device(Base):
     """Device record with a Phase 2 identity mapping.

@@ -11,6 +11,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import threading
 import time
 from collections import OrderedDict, deque
@@ -279,14 +280,20 @@ class PassportExplanationService:
     def _validate_model_text(value: Any) -> Optional[str]:
         if not isinstance(value, str):
             return None
-        cleaned = " ".join(value.split()).strip()
+        # Preserve paragraph and list boundaries: the frontend renderer uses these
+        # line breaks to build real headings, paragraphs and bullets. Normalize
+        # whitespace *within* each line without flattening the document.
+        source_lines = value.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        cleaned = "\n".join(" ".join(line.split()) for line in source_lines).strip()
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
         # Refuse empty/abnormally long output. Frontend still renders all
         # authoritative deterministic checks separately regardless.
         if len(cleaned) < 20 or len(cleaned) > 1400:
             return None
         # Do not display obviously cut-off prose (for example, a response ending
         # mid-sentence after a provider output limit). Use the deterministic fallback.
-        if cleaned[-1] not in ".?!\'\")]}":
+        terminal_text = re.sub(r"[\s*_`#]+$", "", cleaned)
+        if not terminal_text or terminal_text[-1] not in ".?!\'\")]}":
             return None
         lowered = cleaned.lower()
         forbidden_claims = (
@@ -332,7 +339,7 @@ class PassportExplanationService:
             round_value = event.get("round")
             if isinstance(round_value, int) and not isinstance(round_value, bool) and round_value >= 0:
                 item["round"] = round_value
-            timestamp = _short_text(event.get("timestamp"), 40)
+            timestamp = _short_text(event.get("timestamp"), 35)
             if timestamp:
                 item["timestamp"] = timestamp
             # Do not pass transaction refs, device IDs, hashes, or arbitrary metadata.
@@ -373,13 +380,39 @@ class PassportExplanationService:
 
     @staticmethod
     def _fallback(facts: Dict[str, Any], reason: str) -> Dict[str, Any]:
-        summary = _short_text(facts.get("summary"), 1000) if isinstance(facts, dict) else None
-        reconciliation = facts.get("reconciliation") if isinstance(facts, dict) else None
-        headline = _short_text(reconciliation.get("headline"), 240) if isinstance(reconciliation, dict) else None
-        if summary and headline and headline not in summary:
-            text = f"{headline} {summary}"
-        else:
-            text = summary or headline or "The passport explanation is not available right now."
+        """Produce a readable fallback using only the precomputed passport facts."""
+        data = facts if isinstance(facts, dict) else {}
+        reconciliation = data.get("reconciliation") if isinstance(data.get("reconciliation"), dict) else {}
+        headline = _short_text(reconciliation.get("headline"), 220) or "Reconciliation could not be fully completed."
+        summary = _short_text(data.get("summary"), 300)
+        parts = [f"### Device passport status\n{headline}"]
+        if summary and summary != headline and headline not in summary:
+            parts.append(summary)
+
+        timeline = data.get("timeline") if isinstance(data.get("timeline"), list) else []
+        safe_events = []
+        for event in timeline[-4:]:
+            if not isinstance(event, dict):
+                continue
+            description = _short_text(event.get("description"), 120)
+            timestamp = _short_text(event.get("timestamp"), 40)
+            if description:
+                safe_events.append(f"- {description}" + (f" ({timestamp})" if timestamp else ""))
+        if safe_events:
+            parts.append("### Lifecycle history\n" + "\n".join(safe_events))
+
+        limitations = data.get("limitations") if isinstance(data.get("limitations"), list) else []
+        notes = []
+        for item in limitations[:2]:
+            note = _short_text(item, 120)
+            if note:
+                notes.append(f"- {note}")
+        if not notes:
+            notes.append("- This summary uses the returned reconciliation facts; it does not independently verify physical events.")
+        parts.append("### System notes\n" + "\n".join(notes))
+        text = "\n\n".join(parts)
+        if len(text) > 1400:
+            text = text[:1397].rsplit(" ", 1)[0].rstrip(" -*#") + "…"
         return {
             "provider": "deterministic_fallback",
             "generated": False,

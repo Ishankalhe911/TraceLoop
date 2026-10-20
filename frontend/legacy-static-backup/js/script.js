@@ -2968,85 +2968,6 @@ function renderPassportIntelligence(facts) {
   const explanation = facts?.explanation || {};
   const explanationText = explanation.text || facts.summary || 'No explanation was returned.';
 
-  // Format Markdown safely, including escaped bullets and headings.
-  const formatMarkdown = text => {
-    if (!text) return '';
-
-    let normalized = String(text)
-      .replace(/\r\n?/g, '\n')
-      // Restore escaped Markdown characters such as \* and \#
-      .replace(/\\(?=[*#])/g, '')
-      // Remove stray backslashes at line ends
-      .replace(/\\[ \t]*(?=\n|$)/g, '')
-      // Restore literal escaped newline sequences
-      .replace(/\\n/g, '\n')
-      .replace(/\\r/g, '')
-      // Split headings that were returned on the same line as their content
-      .replace(/(#{1,6}\s+(?:📱\s*)?Device Passport Status)\s+/giu, '$1\n')
-      .replace(/(#{1,6}\s+(?:⏱️?\s*)?Lifecycle History)\s+/giu, '$1\n')
-      .replace(/(#{1,6}\s+(?:⚠️?\s*)?System Notes)\s+/giu, '$1\n')
-      // Restore line breaks before inline headings and Markdown bullets
-      .replace(/([^\n])\s+(?=#{1,6}\s)/g, '$1\n')
-      .replace(/([^\n])\s+(?=(?:\*\s+|•\s*|-\s+)\S)/g, '$1\n')
-      // A standalone bullet marker should attach to the following text
-      .replace(/^[ \t]*[*•-][ \t]*\n[ \t]*/gm, '* ')
-      .replace(/[ \t]*\n[ \t]*/g, '\n')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
-
-    const formatInline = value =>
-      esc(value).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-
-    const blocks = [];
-    let paragraph = [];
-
-    const flushParagraph = () => {
-      if (!paragraph.length) return;
-
-      blocks.push(
-        `<p style="margin:0 0 12px;line-height:1.6;">${paragraph
-          .map(formatInline)
-          .join('<br>')}</p>`
-      );
-
-      paragraph = [];
-    };
-
-    for (const rawLine of normalized.split('\n')) {
-      const line = rawLine.trim();
-
-      if (!line) {
-        flushParagraph();
-        continue;
-      }
-
-      const heading = line.match(/^#{1,6}\s+(.+)$/);
-
-      if (heading) {
-        flushParagraph();
-        blocks.push(
-          `<h4 style="margin:20px 0 10px;font-size:1.1rem;color:var(--text);">${formatInline(heading[1])}</h4>`
-        );
-        continue;
-      }
-
-      const bullet = line.match(/^(?:[*•-])\s*(.+)$/);
-
-      if (bullet) {
-        flushParagraph();
-        blocks.push(
-          `<div style="margin-left:12px;padding:4px 0;display:flex;align-items:flex-start;gap:8px;"><span style="color:var(--muted);flex-shrink:0;">•</span><span>${formatInline(bullet[1])}</span></div>`
-        );
-        continue;
-      }
-
-      paragraph.push(line);
-    }
-
-    flushParagraph();
-    return blocks.join('');
-  };
-
   const checksHtml = checks.length ? `
     <div class="passport-checks">
       ${checks.map(check => `
@@ -3074,7 +2995,6 @@ function renderPassportIntelligence(facts) {
     ['Independent chain history', sources.independent_chain_history],
     ['Local event mirror', sources.database_event_mirror]
   ];
-
   const coverageHtml = `<div class="passport-source-grid">${coverage.map(([label, value]) => `
     <div><small>${esc(label)}</small><strong>${esc(value || 'UNKNOWN')}</strong></div>
   `).join('')}</div>`;
@@ -3089,14 +3009,10 @@ function renderPassportIntelligence(facts) {
         <span class="passport-check-status ${esc(statusClass(status))}">${esc(status)}</span>
         <strong>${esc(reconciliation.headline || 'Reconciliation result unavailable.')}</strong>
       </div>
-
       <section class="passport-explanation">
         <div class="passport-explanation-label">Explanation</div>
-        <div class="passport-summary" style="line-height:1.6;font-size:0.95rem;">
-          ${formatMarkdown(explanationText)}
-        </div>
+        <p class="passport-summary">${esc(explanationText)}</p>
       </section>
-
       ${checksHtml}
       <div class="section-label" style="margin-top:18px">Independent confirmed chain history</div>
       ${timelineHtml}
