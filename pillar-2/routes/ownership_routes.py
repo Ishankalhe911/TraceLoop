@@ -375,6 +375,11 @@ def initiate_transfer(
             "message": "Transfer initiated. Awaiting buyer acceptance."
         }, 201)
 
+    except HTTPException:
+        # Preserve deliberate workflow conflicts (for example, missing or
+        # inactive assigned verifier) instead of converting them to HTTP 500.
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
@@ -642,18 +647,46 @@ def complete_transfer(
             detail="This transfer has a previous chain attempt requiring manual reconciliation. Do not retry."
         )
 
-    new_owner_hash = generate_sha256(transfer.to_user_id)
     attempted_at = datetime.now(timezone.utc)
 
-    # Persist the attempt latch before calling the chain. This requires the companion
-    # migration adding the chain_attempt_* columns to transfers.
-    transfer.chain_attempt_status = "SUBMISSION_STARTED"
-    transfer.chain_attempted_at = attempted_at
+    # Atomically claim the submission attempt. A read-then-write ORM assignment
+    # is not sufficient: two requests can both read a clear latch before either
+    # commits. This conditional UPDATE is the compare-and-swap; on PostgreSQL,
+    # only one concurrent request can change an eligible row. The loser updates
+    # zero rows and must not call the chain service.
     try:
+        claimed_rows = db.query(Transfer).filter(
+            Transfer.id == transfer.id,
+            Transfer.status == TransferStatus.IN_PROGRESS,
+            Transfer.assigned_verifier_id == current_user.id,
+            (
+                Transfer.chain_attempt_status.is_(None)
+                | (Transfer.chain_attempt_status == "PRE_SUBMISSION_FAILED")
+            ),
+        ).update(
+            {
+                Transfer.chain_attempt_status: "SUBMISSION_STARTED",
+                Transfer.chain_attempted_at: attempted_at,
+                Transfer.chain_error_code: None,
+            },
+            synchronize_session=False,
+        )
+        if claimed_rows != 1:
+            db.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Another request has claimed this transfer submission, or the transfer "
+                    "state changed. Refresh and reconcile before retrying."
+                ),
+            )
         db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
     except Exception:
         db.rollback()
-        raise HTTPException(status_code=500, detail="Could not record transfer attempt; no chain call was made.")
+        raise HTTPException(status_code=500, detail="Could not record transfer attempt; no chain call was made.") from None
 
     try:
         chain_result = ledger_service.transfer_device(

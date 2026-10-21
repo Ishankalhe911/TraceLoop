@@ -270,11 +270,42 @@ def complete_recycling(
         raise HTTPException(status_code=502, detail="Could not confirm whether the device is eligible for recycling on-chain.") from None
 
     attempted_at = datetime.now(timezone.utc)
-    record.chain_attempt_status = "SUBMISSION_STARTED"
-    record.chain_attempted_at = attempted_at
-    record.chain_error_code = None
+
+    # Atomically claim this recycling record before submission. Concurrent
+    # requests may both pass the earlier read-only checks, so the claim must be
+    # a conditional database UPDATE rather than an ORM read-then-write. Only
+    # the request that changes the record from an eligible state can submit.
     try:
+        claimed_rows = db.query(RecyclingRecord).filter(
+            RecyclingRecord.id == record.id,
+            RecyclingRecord.device_id == device.id,
+            RecyclingRecord.recycler_id == current_user.id,
+            RecyclingRecord.recycling_status == RecyclingStatus.RECEIVED,
+            (
+                RecyclingRecord.chain_attempt_status.is_(None)
+                | (RecyclingRecord.chain_attempt_status == "PRE_SUBMISSION_FAILED")
+            ),
+        ).update(
+            {
+                RecyclingRecord.chain_attempt_status: "SUBMISSION_STARTED",
+                RecyclingRecord.chain_attempted_at: attempted_at,
+                RecyclingRecord.chain_error_code: None,
+            },
+            synchronize_session=False,
+        )
+        if claimed_rows != 1:
+            db.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Another request has claimed this recycling submission, or the recycling "
+                    "state changed. Refresh and reconcile before retrying."
+                ),
+            )
         db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
     except Exception:
         db.rollback()
         raise HTTPException(status_code=500, detail="Could not record the recycling attempt; no chain call was made.") from None
