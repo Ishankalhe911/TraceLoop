@@ -455,6 +455,9 @@ class Transfer(Base):
     device_id = Column(String(40), ForeignKey("devices.id"), nullable=False)
     from_user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
     to_user_id = Column(String(36), ForeignKey("users.id"), nullable=True)
+    # Assignment is set before physical completion. verifier_id remains the actor
+    # who actually completed the transfer, for historical attribution.
+    assigned_verifier_id = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
     verifier_id = Column(String(36), ForeignKey("users.id"), nullable=True)
 
     status = Column(Enum(TransferStatus), default=TransferStatus.PENDING, nullable=False)

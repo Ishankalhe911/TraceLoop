@@ -31,7 +31,6 @@ from database import (
 )
 from routes.evidence_routes import (
     certificate_date_for_display,
-    sync_expired_evidence_for_user,
 )
 
 logger = logging.getLogger("TraceLoop.UserRoutes")
@@ -174,10 +173,10 @@ def send_otp(payload: OTPSendPayload, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.phone == payload.phone).first()
     if not user:
         raise HTTPException(status_code=404, detail="Phone number not registered.")
-    if user.status in {UserStatus.SUSPENDED, UserStatus.REJECTED}:
+    if user.status == UserStatus.SUSPENDED:
         raise HTTPException(
             status_code=403,
-            detail=f"Account is {user.status.value}. Cannot send OTP.",
+            detail="Account is SUSPENDED. An administrator must reopen KYC before sign-in is available.",
         )
 
     otp = str(random.randint(100000, 999999))
@@ -239,8 +238,11 @@ def verify_otp(payload: OTPVerifyPayload, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.phone == payload.phone).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found.")
-    if user.status in {UserStatus.SUSPENDED, UserStatus.REJECTED}:
-        raise HTTPException(status_code=403, detail=f"Account is {user.status.value}.")
+    if user.status == UserStatus.SUSPENDED:
+        raise HTTPException(
+            status_code=403,
+            detail="Account is SUSPENDED. An administrator must reopen KYC before sign-in is available.",
+        )
 
     verify_otp_session(phone=payload.phone, otp_code=payload.otp_code, db=db)
 
@@ -308,10 +310,12 @@ def get_my_profile(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_any_status),
 ):
-    """Return the signed-in user's profile and synchronize expired role credentials."""
-    sync_expired_evidence_for_user(current_user, db)
-    # Refresh in case the expiry helper changed account status in the database.
-    db.refresh(current_user)
+    """Return the signed-in user's profile without changing lifecycle/account state.
+
+    Passive GET requests must never change approval state. Known credential expiry is
+    enforced when a protected role operation is attempted; KYC uploads are mutating
+    actions and can synchronize an explicitly configured expiry policy.
+    """
     return standard_response(
         {
             "user_id": current_user.id,
@@ -368,8 +372,6 @@ def get_my_kyc_documents(
     Phase 1 value is also included as `verification_status`. Linked legacy rows are emitted
     only once, through their EvidenceRecord, to avoid duplicate notifications.
     """
-    sync_expired_evidence_for_user(current_user, db)
-
     evidence_rows = (
         db.query(EvidenceRecord)
         .filter(EvidenceRecord.user_id == current_user.id)

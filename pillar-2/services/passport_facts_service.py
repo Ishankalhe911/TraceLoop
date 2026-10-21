@@ -24,6 +24,10 @@ from database import (
     IdentityVersion,
     LedgerEvent,
     RegistrationStatus,
+    Transfer,
+    TransferStatus,
+    RecyclingRecord,
+    RecyclingStatus,
 )
 from services.chain_history_service import ChainHistoryService, PUBLIC_EVENT_TYPES
 
@@ -417,8 +421,47 @@ class PassportFactsService:
             for event in chain_events
         ]
 
+        # Public, device-scoped circularity facts. These are counts/statuses only;
+        # do not infer avoided emissions or e-waste mass from a transfer/recycle event.
+        try:
+            completed_transfer_count = int(
+                self.db.query(Transfer)
+                .filter(Transfer.device_id == device.id, Transfer.status == TransferStatus.COMPLETED)
+                .count()
+            )
+            recycling_rows = (
+                self.db.query(RecyclingRecord)
+                .filter(RecyclingRecord.device_id == device.id)
+                .order_by(RecyclingRecord.completion_date.desc())
+                .all()
+            )
+            confirmed_recycling = any(
+                _status_text(row.recycling_status) == RecyclingStatus.RECYCLED.value
+                and row.completion_date is not None
+                for row in recycling_rows
+            )
+            circularity_impact = {
+                "completed_transfer_count": completed_transfer_count,
+                "confirmed_recycling_completion": confirmed_recycling,
+                "measured_e_waste_mass_kg": None,
+                "estimated_co2e_avoided_kg": None,
+                "methodology_status": "COUNTS_ONLY_NO_UNVALIDATED_IMPACT_ESTIMATES",
+                "note": "Transfers and recycling status are reported as recorded events. No avoided-emissions or mass estimate is made without measured mass and a validated life-cycle method.",
+            }
+        except Exception as exc:
+            logger.warning("Passport circularity facts unavailable (exception_type=%s)", type(exc).__name__)
+            circularity_impact = {
+                "completed_transfer_count": None,
+                "confirmed_recycling_completion": None,
+                "measured_e_waste_mass_kg": None,
+                "estimated_co2e_avoided_kg": None,
+                "methodology_status": "SOURCE_UNAVAILABLE",
+                "note": "Circularity facts could not be queried; unavailable values are not treated as zero.",
+            }
+
         return {
             "summary": summary,
+            "climate_circularity_impact": circularity_impact,
             "read_only": bool(is_legacy or registration_status != RegistrationStatus.CONFIRMED.value),
             "reconciliation": {
                 "status": reconciliation_status,

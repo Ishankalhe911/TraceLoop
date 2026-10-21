@@ -2,8 +2,9 @@
 analytics_routes.py — Trace-Loop Pillar 2
 Regulator-facing analytics layer.
 
-Closes the PS3 IEngage requirement:
-  "Real-time analytics for regulators and consumer incentive mechanisms"
+Provides lifecycle and circularity analytics relevant to IEEE ClimateChain Track 3.
+This is not a claim of formal UN COP 31 compliance. Environmental impact figures are limited to directly observed events; no avoided-CO2e
+or e-waste mass is inferred without device-specific evidence and a documented method.
 
 Metrics are derived from existing Device, LedgerEvent, Transfer,
 Dispute, DeviceHardwareLog, and RecyclingRecord tables. V1 legacy history is
@@ -56,7 +57,7 @@ def get_analytics_overview(
 ):
     """
     Complete system analytics overview.
-    Covers all PS3 IEngage regulatory analytics requirements:
+    Provides operational lifecycle analytics and accountable circularity counts:
       - Total device counts by lifecycle state
       - Hardware change activity
       - Dispute statistics
@@ -172,6 +173,32 @@ def get_analytics_overview(
         .scalar() or 0
     )
 
+    # Climate & circularity: report only observed, auditable counts here.
+    # A transfer is not itself proof of a counterfactual CO2e saving, and a
+    # recycling status is not proof of device mass or recovered-material yield.
+    confirmed_recycling_count = (
+        db.query(func.count(RecyclingRecord.id))
+        .join(Device, Device.id == RecyclingRecord.device_id)
+        .filter(
+            *operational_filter,
+            RecyclingRecord.recycling_status == "RECYCLED",
+            RecyclingRecord.completion_date.isnot(None),
+        )
+        .scalar() or 0
+    )
+    climate_circularity = {
+        "completed_transfer_count": int(completed_transfers),
+        "confirmed_recycling_completion_count": int(confirmed_recycling_count),
+        "measured_e_waste_mass_kg": None,
+        "estimated_co2e_avoided_kg": None,
+        "methodology_status": "COUNTS_ONLY_NO_UNVALIDATED_IMPACT_ESTIMATES",
+        "notes": [
+            "Completed transfers are observed lifecycle events, not proof of avoided new-device production.",
+            "Recycling completion counts require a recorded RECYCLED status and completion timestamp.",
+            "Mass and avoided CO2e are not calculated because device-specific weights, recovery yields, and a validated life-cycle methodology are not currently recorded.",
+        ],
+    }
+
     # Fraud flags
     velocity_flagged = (
         db.query(func.count(Transfer.id))
@@ -243,6 +270,8 @@ def get_analytics_overview(
     return standard_response({
 
         # ── Summary ─────────────────────────────────────────────────────
+        "climate_circularity_impact": climate_circularity,
+
         "summary": {
             "total_devices_registered": total_devices,
             "legacy_test_records": legacy_test_devices,

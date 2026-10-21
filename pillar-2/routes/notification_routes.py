@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
-from auth import get_current_user
+from auth import get_current_user_any_status
 from database import Notification, User, get_db
 
 router = APIRouter(prefix="/api/v1/notifications", tags=["Notifications"])
@@ -41,7 +41,7 @@ def _response(data, code=200):
 def list_notifications(
     limit: int = Query(40, ge=1, le=100),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_any_status),
 ):
     """Return newest notifications for this user only, plus an unread count."""
     unread_count = db.query(Notification).filter(
@@ -58,7 +58,7 @@ def list_notifications(
 def mark_notification_read(
     notification_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_any_status),
 ):
     row = db.query(Notification).filter(
         Notification.id == notification_id,
@@ -75,7 +75,7 @@ def mark_notification_read(
 @router.post("/read-all")
 def mark_all_notifications_read(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_any_status),
 ):
     now = datetime.now(timezone.utc)
     changed = db.query(Notification).filter(

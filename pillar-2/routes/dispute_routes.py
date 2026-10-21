@@ -21,6 +21,7 @@ from database import (
 )
 from auth import get_current_user, RequireRole
 from services.ledger_service import ledger_service
+from services.notification_service import create_notification
 from services.device_policy import require_confirmed_v2_device
 
 router = APIRouter(prefix="/disputes", tags=["Disputes"])
@@ -132,6 +133,19 @@ def report_dispute(
             status=DisputeStatus.UNDER_REVIEW   # Starts as UNDER_REVIEW, not OPEN
         )
         db.add(new_dispute)
+        db.flush()
+        if device.current_owner_id and device.current_owner_id != current_user.id:
+            create_notification(
+                db,
+                user_id=device.current_owner_id,
+                notification_type="dispute_reported",
+                title="A device issue was reported",
+                message=f"A report was submitted for {device.brand_name} · {device.public_id}. An administrator must review it before any on-chain freeze is applied.",
+                action_path="/track?id=" + device.public_id,
+                public_device_id=device.public_id,
+                entity_id=new_dispute.id,
+                dedupe_key=f"dispute:{new_dispute.id}:reported:{device.current_owner_id}",
+            )
         db.commit()
         db.refresh(new_dispute)
 
@@ -208,7 +222,19 @@ def freeze_device(
 
         # Dispute moves from UNDER_REVIEW → OPEN (now active on-chain)
         dispute.status = DisputeStatus.OPEN
-
+        recipients = {device.current_owner_id, dispute.raised_by} - {None, current_user.id}
+        for recipient_id in recipients:
+            create_notification(
+                db,
+                user_id=recipient_id,
+                notification_type="device_disputed",
+                title="Device placed in disputed state",
+                message=f"{device.brand_name} · {device.public_id} is now recorded as DISPUTED. Its verification stamp was invalidated; review the passport before taking further action.",
+                action_path="/track?id=" + device.public_id,
+                public_device_id=device.public_id,
+                entity_id=dispute.id,
+                dedupe_key=f"dispute:{dispute.id}:frozen:{recipient_id}",
+            )
         db.commit()
 
         return standard_response({
@@ -290,7 +316,19 @@ def resolve_dispute(
         dispute.resolution_note = payload.resolution_note
         dispute.resolved_by = current_user.id
         dispute.resolved_at = datetime.now(timezone.utc)
-
+        recipients = {device.current_owner_id, dispute.raised_by} - {None, current_user.id}
+        for recipient_id in recipients:
+            create_notification(
+                db,
+                user_id=recipient_id,
+                notification_type="dispute_resolved",
+                title="Device dispute resolved",
+                message=f"The dispute for {device.brand_name} · {device.public_id} was resolved to {payload.resolved_state.value}. The verification stamp is invalid, so re-verification is required before the next transfer.",
+                action_path="/track?id=" + device.public_id,
+                public_device_id=device.public_id,
+                entity_id=dispute.id,
+                dedupe_key=f"dispute:{dispute.id}:resolved:{recipient_id}",
+            )
         db.commit()
 
         return standard_response({

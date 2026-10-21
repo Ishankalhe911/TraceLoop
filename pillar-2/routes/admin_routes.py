@@ -31,12 +31,13 @@ from routes.evidence_routes import (
     assert_active_role_evidence,
     certificate_date_for_display,
     evidence_object_exists,
+    evidence_file_presence_status,
     parse_certificate_date,
-    sync_expired_evidence_for_user,
     verify_evidence_file_integrity,
 )
 from services.ledger_service import ledger_service
 from services.device_policy import require_confirmed_v2_device
+from services.notification_service import create_notification
 
 logger = logging.getLogger("TraceLoop.AdminRoutes")
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -61,6 +62,10 @@ def standard_response(data: dict = None, code: int = 200) -> dict:
 # --- REQUEST SCHEMAS ---
 class ApprovalPayload(BaseModel):
     notes: Optional[str] = Field(default=None, max_length=3000)
+
+
+class RequireKYCActionPayload(BaseModel):
+    notes: str = Field(..., min_length=10, max_length=3000)
 
 
 class DocReviewPayload(BaseModel):
@@ -113,6 +118,11 @@ def _get_latest_evidence(
         .order_by(EvidenceRecord.created_at.desc(), EvidenceRecord.id.desc())
         .first()
     )
+
+
+def _check_credential_file_presence(credential: Optional[EvidenceRecord]) -> tuple[str, Optional[str]]:
+    """Report object presence for admin diagnostics without changing account state."""
+    return evidence_file_presence_status(credential)
 
 
 def _admin_viewed_evidence(db: Session, admin_id: str, evidence: EvidenceRecord) -> bool:
@@ -300,6 +310,42 @@ def _review_evidence_record(
             notes=action_notes[:4000],
         )
     )
+    if decision == "ACCEPT":
+        if evidence.evidence_type == EvidenceType.PURCHASE_PROOF:
+            review_title = "Purchase proof approved"
+            if owner.status == UserStatus.ACTIVE:
+                review_message = "Your purchase invoice was verified. The account is active; you can continue device registration when the device details are ready."
+                review_path = "/devices/new"
+            else:
+                review_message = "Your purchase invoice was verified. Continue device registration when your account status and the remaining registration requirements allow it."
+                review_path = "/devices/new"
+        elif owner.status == UserStatus.ACTIVE:
+            review_title = "Credential evidence approved"
+            review_message = f"Your {evidence.evidence_type.value} evidence was accepted. Your account remains active; review the credential history in onboarding."
+            review_path = "/onboarding"
+        else:
+            review_title = "Evidence approved — next step: account activation"
+            review_message = f"Your {evidence.evidence_type.value} evidence was accepted. The account is still {owner.status.value}; complete any separate account-approval step shown in onboarding."
+            review_path = "/onboarding"
+    else:
+        review_title = "Evidence was not approved"
+        review_message = (
+            f"Your {evidence.evidence_type.value} evidence was rejected. Reason: "
+            f"{(payload.rejection_reason or 'Review the feedback in onboarding.').strip()} "
+            "Upload a corrected document. If the account itself was rejected, a successful resubmission reopens KYC; an evidence rejection alone does not suspend an otherwise active account."
+        )
+        review_path = "/onboarding"
+
+    create_notification(
+        db,
+        user_id=evidence.user_id,
+        notification_type="evidence_reviewed",
+        title=review_title,
+        message=review_message,
+        action_path=review_path,
+        entity_id=evidence.id,
+        dedupe_key=f"evidence:{evidence.id}:reviewed:{decision}",
+    )
     db.commit()
     db.refresh(evidence)
     if linked_doc is not None:
@@ -338,10 +384,14 @@ def get_pending_approvals(
 
     pending_accounts = []
     for user in pending_users:
-        sync_expired_evidence_for_user(user, db)
+        # A list read never changes account status. The existing approval action checks
+        # full file integrity again immediately before activation.
         credential_type = ROLE_CREDENTIAL_TYPES[user.role]
         latest = _get_latest_evidence(db, user.id, credential_type)
         credential_status = latest.verification_status.value if latest else "MISSING"
+        stored_evidence_status, stored_evidence_issue = _check_credential_file_presence(
+            latest if latest and credential_status == "VERIFIED" else None
+        )
         activation_stage = {
             "MISSING": "DOCUMENT_REQUIRED",
             "PENDING": "WAITING_FOR_DOCUMENT_REVIEW",
@@ -350,6 +400,11 @@ def get_pending_approvals(
             "EXPIRED": "CREDENTIAL_EXPIRED",
             "REVOKED": "CREDENTIAL_REVOKED",
         }.get(credential_status, "CREDENTIAL_UNAVAILABLE")
+        if credential_status == "VERIFIED" and stored_evidence_status in {"MISSING", "INVALID_REFERENCE"}:
+            activation_stage = "REUPLOAD_REQUIRED"
+        elif credential_status == "VERIFIED" and stored_evidence_status == "STORAGE_UNAVAILABLE":
+            activation_stage = "STORAGE_CHECK_UNAVAILABLE"
+        can_activate = credential_status == "VERIFIED" and stored_evidence_status == "PRESENT"
         pending_accounts.append(
             {
                 # This is the one onboarding/activation request, derived from the user record.
@@ -365,8 +420,15 @@ def get_pending_approvals(
                 "cpcb_number": user.cpcb_number,
                 "credential_evidence_id": latest.id if latest else None,
                 "credential_status": credential_status,
+                "credential_state": (
+                    "REUPLOAD_REQUIRED" if activation_stage == "REUPLOAD_REQUIRED"
+                    else "STORAGE_CHECK_UNAVAILABLE" if activation_stage == "STORAGE_CHECK_UNAVAILABLE"
+                    else activation_stage
+                ),
+                "stored_evidence_status": stored_evidence_status,
+                "credential_issue": stored_evidence_issue,
                 "activation_stage": activation_stage,
-                "can_activate": credential_status == "VERIFIED",
+                "can_activate": can_activate,
                 "credential_expires_at": certificate_date_for_display(latest.expires_at) if latest and TIME_BOUND_ENFORCEMENT_ENABLED else None,
                 "created_at": user.created_at.isoformat() if user.created_at else None,
             }
@@ -404,6 +466,7 @@ def approve_account(
 
     try:
         _set_user_active(target, current_user)
+        decision_at = datetime.now(timezone.utc)
         db.add(
             AdminAction(
                 admin_id=current_user.id,
@@ -411,6 +474,16 @@ def approve_account(
                 target_user_id=target.id,
                 notes=(payload.notes or f"Account approved using evidence {credential.id}.")[:4000],
             )
+        )
+        create_notification(
+            db,
+            user_id=target.id,
+            notification_type="account_approved",
+            title="Your account is approved",
+            message=f"An administrator approved your {target.role.value} account. Your status is ACTIVE. Open your workspace to continue the workflow.",
+            action_path="/dashboard",
+            entity_id=target.id,
+            dedupe_key=f"account:{target.id}:approved:{decision_at.isoformat()}",
         )
         db.commit()
         return standard_response(
@@ -447,20 +520,35 @@ def reject_account(
         target.admin_approved = False
         target.admin_approved_by = current_user.id
         target.admin_approved_at = datetime.now(timezone.utc)
+        rejection_note = (payload.notes or "Account rejected by administrator.").strip()
+        decision_at = datetime.now(timezone.utc)
         db.add(
             AdminAction(
                 admin_id=current_user.id,
                 action_type=AdminActionType.REJECT,
                 target_user_id=target.id,
-                notes=(payload.notes or "Account rejected by administrator.")[:4000],
+                notes=rejection_note[:4000],
             )
+        )
+        create_notification(
+            db,
+            user_id=target.id,
+            notification_type="account_rejected",
+            title="Account onboarding was rejected",
+            message=(
+                f"An administrator rejected your account onboarding. Reason: {rejection_note} "
+                "To request another review, sign in and submit corrected role-specific evidence in onboarding. Your protected access remains disabled until approval."
+            ),
+            action_path="/onboarding",
+            entity_id=target.id,
+            dedupe_key=f"account:{target.id}:rejected:{decision_at.isoformat()}",
         )
         db.commit()
         return standard_response(
             {
                 "target_user_id": target.id,
                 "new_status": target.status.value,
-                "message": "Account onboarding rejected. An administrator must explicitly reopen it before further uploads are permitted.",
+                "message": "Account onboarding rejected. The user can sign in and submit corrected evidence to reopen KYC_IN_PROGRESS; protected access remains disabled until evidence review and required approval are complete.",
             }
         )
     except Exception:
@@ -756,6 +844,32 @@ def export_device(
         raise HTTPException(status_code=500, detail="Export failed. Check server logs.")
 
 
+def _read_legacy_state_for_admin(device: Device) -> Optional[dict]:
+    is_legacy = (
+        device.identity_version == IdentityVersion.V1_LEGACY
+        or device.registration_status == RegistrationStatus.LEGACY_TEST
+    )
+    if not is_legacy:
+        return None
+    if not device.legacy_chain_id:
+        return {"state_label": "LEGACY_CHAIN_ID_UNAVAILABLE", "stamp_valid": None, "updated_at": None}
+    try:
+        raw = ledger_service.get_legacy_device_state(device.legacy_chain_id)
+        # Deliberately whitelist display-safe fields; never expose hashes/config/wallet data.
+        return {
+            "state_label": str(raw.get("state_label") or "UNKNOWN"),
+            "stamp_valid": raw.get("stamp_valid"),
+            "updated_at": raw.get("updated_at"),
+        }
+    except Exception as exc:
+        logger.info(
+            "Admin legacy state lookup unavailable (device_row_hash=%s, exception_type=%s)",
+            __import__("hashlib").sha256(device.id.encode("utf-8")).hexdigest()[:12],
+            type(exc).__name__,
+        )
+        return {"state_label": "LEGACY_CHAIN_STATE_UNAVAILABLE", "stamp_valid": None, "updated_at": None}
+
+
 @router.get("/devices")
 def get_all_devices(
     db: Session = Depends(get_db),
@@ -778,6 +892,8 @@ def get_all_devices(
                 {
                     "device_id": device.public_id,
                     "public_id": device.public_id,
+                    "legacy_chain_id": device.legacy_chain_id,
+                    "legacy_chain_state": _read_legacy_state_for_admin(device),
                     "brand": device.brand_name,
                     "status": (
                         "V1_LEGACY"
@@ -813,25 +929,57 @@ def get_verifiers(
     db: Session = Depends(get_db),
     current_user: User = Depends(RequireRole([UserRole.ADMIN])),
 ):
+    """List active verifier accounts with read-only credential and file-presence diagnostics.
+
+    A dashboard read never activates, suspends, or downgrades an account. A confirmed
+    missing file is reported explicitly; protected operations independently verify the
+    current file bytes and move an active account into KYC if a credential gap is confirmed.
+    """
     candidates = (
         db.query(User)
         .filter(User.role == UserRole.VERIFIABLE, User.status == UserStatus.ACTIVE)
+        .order_by(User.created_at.asc())
         .all()
     )
     verifiers = []
-    status_changed = False
     for verifier in candidates:
+        credential = None
+        credential_issue = None
+        latest = _get_latest_evidence(db, verifier.id, EvidenceType.BRAND_AUTHORIZATION)
         try:
-            credential = assert_active_role_evidence(verifier, EvidenceType.BRAND_AUTHORIZATION, db)
-            verify_evidence_file_integrity(credential)
-        except HTTPException:
-            # Fail closed: if the active verifier has no currently valid, intact credential,
-            # remove active privileges until an admin verifies a new credential.
-            if verifier.status == UserStatus.ACTIVE:
-                verifier.status = UserStatus.KYC_IN_PROGRESS
-                verifier.admin_approved = False
-                status_changed = True
-            continue
+            credential = assert_active_role_evidence(
+                verifier,
+                EvidenceType.BRAND_AUTHORIZATION,
+                db,
+                transition_account_on_failure=False,
+            )
+        except HTTPException as exc:
+            credential_issue = str(exc.detail)
+
+        record_valid = credential is not None
+        if record_valid:
+            credential_status = "VERIFIED"
+            stored_evidence_status, stored_evidence_issue = _check_credential_file_presence(credential)
+        elif latest is None:
+            credential_status = "MISSING"
+            stored_evidence_status = "NO_EVIDENCE_RECORD"
+            stored_evidence_issue = None
+        else:
+            credential_status = latest.verification_status.value
+            stored_evidence_status = "NOT_CHECKED_NO_VALID_CREDENTIAL"
+            stored_evidence_issue = None
+
+        if stored_evidence_issue:
+            credential_issue = f"{credential_issue}; {stored_evidence_issue}" if credential_issue else stored_evidence_issue
+        file_present = stored_evidence_status == "PRESENT"
+        if stored_evidence_status in {"MISSING", "INVALID_REFERENCE"}:
+            credential_state = "REUPLOAD_REQUIRED"
+        elif stored_evidence_status == "STORAGE_UNAVAILABLE":
+            credential_state = "STORAGE_CHECK_UNAVAILABLE"
+        elif record_valid and file_present:
+            credential_state = "READY_FOR_RUNTIME_INTEGRITY_CHECK"
+        else:
+            credential_state = credential_status
 
         verifiers.append(
             {
@@ -843,14 +991,194 @@ def get_verifiers(
                 "service_center_id": verifier.service_center_id,
                 "brand_auth_code": verifier.brand_auth_code,
                 "approved_at": verifier.admin_approved_at.isoformat() if verifier.admin_approved_at else None,
-                "credential_evidence_id": credential.id,
-                "credential_expires_at": certificate_date_for_display(credential.expires_at),
+                "credential_evidence_id": credential.id if credential else (latest.id if latest else None),
+                "credential_expires_at": certificate_date_for_display(credential.expires_at) if credential else (
+                    certificate_date_for_display(latest.expires_at) if latest else None
+                ),
+                "credential_status": credential_status,
+                "credential_state": credential_state,
+                "credential_record_valid": record_valid,
+                "credential_valid": record_valid and file_present,
+                "credential_issue": credential_issue,
+                "stored_evidence_status": stored_evidence_status,
+                "protected_action_integrity_recheck": bool(record_valid and file_present),
+                "eligible_for_protected_actions": bool(record_valid and file_present),
             }
         )
+    return standard_response(
+        {
+            "total": len(verifiers),
+            "verifiers": verifiers,
+            "credential_issues": sum(1 for item in verifiers if not item["credential_valid"]),
+        }
+    )
 
-    if status_changed:
+
+@router.get("/role-accounts/active")
+def get_active_role_accounts(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(RequireRole([UserRole.ADMIN])),
+):
+    """List active verifier/recycler accounts with passive credential/file diagnostics.
+
+    File presence is checked for administrative visibility but account state is never
+    changed by this GET. Content hash/size and approval are rechecked on each protected
+    operation; a confirmed missing/tampered file there blocks the operation and moves an
+    active role account into KYC review.
+    """
+    accounts = (
+        db.query(User)
+        .filter(User.role.in_(list(ROLE_CREDENTIAL_TYPES.keys())), User.status == UserStatus.ACTIVE)
+        .order_by(User.created_at.asc())
+        .all()
+    )
+    rows = []
+    for account in accounts:
+        required_type = ROLE_CREDENTIAL_TYPES[account.role]
+        latest = _get_latest_evidence(db, account.id, required_type)
+        credential = None
+        issue = None
+        try:
+            credential = assert_active_role_evidence(
+                account, required_type, db, transition_account_on_failure=False
+            )
+        except HTTPException as exc:
+            issue = str(exc.detail)
+
+        record_valid = credential is not None
+        if record_valid:
+            stored_evidence_status, stored_issue = _check_credential_file_presence(credential)
+        elif latest is None:
+            stored_evidence_status, stored_issue = "NO_EVIDENCE_RECORD", None
+        else:
+            stored_evidence_status, stored_issue = "NOT_CHECKED_NO_VALID_CREDENTIAL", None
+        if stored_issue:
+            issue = f"{issue}; {stored_issue}" if issue else stored_issue
+        file_present = stored_evidence_status == "PRESENT"
+        if stored_evidence_status in {"MISSING", "INVALID_REFERENCE"}:
+            credential_state = "REUPLOAD_REQUIRED"
+        elif stored_evidence_status == "STORAGE_UNAVAILABLE":
+            credential_state = "STORAGE_CHECK_UNAVAILABLE"
+        elif record_valid and file_present:
+            credential_state = "READY_FOR_RUNTIME_INTEGRITY_CHECK"
+        else:
+            credential_state = "VERIFIED" if record_valid else (latest.verification_status.value if latest else "MISSING")
+
+        rows.append({
+            "user_id": account.id,
+            "name": account.name,
+            "phone": account.phone,
+            "role": account.role.value,
+            "status": account.status.value,
+            "service_center_id": account.service_center_id,
+            "cpcb_number": account.cpcb_number,
+            "credential_evidence_id": credential.id if credential else (latest.id if latest else None),
+            "credential_status": "VERIFIED" if credential else (latest.verification_status.value if latest else "MISSING"),
+            "credential_state": credential_state,
+            "credential_record_valid": record_valid,
+            "credential_valid": record_valid and file_present,
+            "credential_issue": issue,
+            "stored_evidence_status": stored_evidence_status,
+            "protected_action_integrity_recheck": bool(record_valid and file_present),
+            "eligible_for_protected_actions": bool(record_valid and file_present),
+            "approved_at": account.admin_approved_at.isoformat() if account.admin_approved_at else None,
+        })
+    return standard_response({
+        "total": len(rows),
+        "accounts": rows,
+        "credential_issues": sum(1 for row in rows if not row["credential_valid"]),
+    })
+
+
+@router.post("/role-accounts/{account_id}/require-kyc")
+@router.post("/verifiers/{account_id}/require-kyc", include_in_schema=False)
+def require_role_account_kyc(
+    account_id: str,
+    payload: RequireKYCActionPayload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(RequireRole([UserRole.ADMIN])),
+):
+    """Explicitly move a verifier or recycler back to KYC and revoke its prior role credential.
+
+    This is an intentional admin action requiring an audit reason, not an automatic
+    consequence of rendering a list or a temporary object-storage failure.
+    """
+    account = (
+        db.query(User)
+        .filter(User.id == account_id, User.role.in_(list(ROLE_CREDENTIAL_TYPES.keys())))
+        .first()
+    )
+    if account is None:
+        raise HTTPException(status_code=404, detail="Approved role account not found.")
+    if account.status == UserStatus.KYC_IN_PROGRESS:
+        raise HTTPException(status_code=409, detail="Account is already in KYC review.")
+    if account.status not in {UserStatus.ACTIVE, UserStatus.SUSPENDED, UserStatus.REJECTED}:
+        raise HTTPException(status_code=409, detail=f"Cannot reopen KYC from {account.status.value}.")
+
+    now = datetime.now(timezone.utc)
+    reason = payload.notes.strip()
+    if len(reason) < 10:
+        raise HTTPException(status_code=422, detail="A meaningful admin reason of at least 10 characters is required.")
+    credential_type = ROLE_CREDENTIAL_TYPES[account.role]
+    credentials = (
+        db.query(EvidenceRecord)
+        .filter(
+            EvidenceRecord.user_id == account.id,
+            EvidenceRecord.evidence_type == credential_type,
+            EvidenceRecord.subject_type == EvidenceSubjectType.USER_ROLE_CREDENTIAL,
+            EvidenceRecord.verification_status == EvidenceVerificationStatus.VERIFIED,
+        )
+        .all()
+    )
+    try:
+        for credential in credentials:
+            credential.verification_status = EvidenceVerificationStatus.REVOKED
+            credential.reviewed_by = current_user.id
+            credential.reviewed_at = now
+            credential.review_notes = _append_note(
+                credential.review_notes,
+                f"KYC reopened by administrator: {reason}",
+            )
+
+        account.status = UserStatus.KYC_IN_PROGRESS
+        account.admin_approved = False
+        db.add(
+            AdminAction(
+                admin_id=current_user.id,
+                action_type=AdminActionType.REVOKE,
+                target_user_id=account.id,
+                notes=(
+                    f"REQUIRE_KYC: role={account.role.value}; reason={reason}; "
+                    f"revoked_{credential_type.value.lower()}_records={len(credentials)}"
+                )[:4000],
+            )
+        )
+        create_notification(
+            db,
+            user_id=account.id,
+            notification_type="credential_review_required",
+            title="Additional KYC review required",
+            message=(
+                f"An administrator requires a fresh {account.role.value} credential review. Reason: {reason} "
+                "Protected role actions are paused. Sign in, submit the current role-authorization document in onboarding, and wait for evidence review and account approval."
+            ),
+            action_path="/onboarding",
+            entity_id=account.id,
+            dedupe_key=f"admin-require-kyc:{account.id}:{now.isoformat()}",
+        )
         db.commit()
-    return standard_response({"total": len(verifiers), "verifiers": verifiers})
+        return standard_response(
+            {
+                "user_id": account.id,
+                "status": account.status.value,
+                "revoked_credentials": len(credentials),
+                "message": f"{account.role.value} account moved to KYC_IN_PROGRESS. Protected actions remain disabled until new evidence is approved and the account is reactivated.",
+            }
+        )
+    except Exception:
+        db.rollback()
+        logger.exception("Could not reopen KYC for role account %s", account_id)
+        raise HTTPException(status_code=500, detail="Could not move the account to KYC. Check server logs.")
 
 
 @router.post("/verifiers/{verifier_id}/revoke")
@@ -899,6 +1227,16 @@ def revoke_verifier(
                 target_user_id=verifier.id,
                 notes=f"Verifier suspended and {len(credentials)} verified BRAND_AUTHORIZATION credential(s) revoked.",
             )
+        )
+        create_notification(
+            db,
+            user_id=verifier.id,
+            notification_type="verifier_suspended",
+            title="Service-centre access suspended",
+            message="An administrator suspended service-centre access and revoked the current authorization credential. Contact is not required through this app; if the administrator reopens KYC, submit a current authorization document to request re-approval.",
+            action_path="/onboarding",
+            entity_id=verifier.id,
+            dedupe_key=f"verifier-suspended:{verifier.id}:{now.isoformat()}",
         )
         db.commit()
         return standard_response(

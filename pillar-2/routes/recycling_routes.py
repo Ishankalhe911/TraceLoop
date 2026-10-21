@@ -21,6 +21,9 @@ from database import (
 from auth import RequireRole
 from services.ledger_service import LedgerSubmissionError, ledger_service
 from services.device_policy import require_confirmed_v2_device, is_confirmed_v2_device
+from services.notification_service import create_notification
+from routes.evidence_routes import assert_active_role_evidence
+from database import EvidenceType
 
 router = APIRouter(prefix="/recycling", tags=["Recycling"])
 logger = logging.getLogger("TraceLoop.Recycling")
@@ -179,6 +182,9 @@ def receive_device(
             status_code=403,
             detail="Device has not been officially transferred to your facility via the verification network.",
         )
+    assert_active_role_evidence(
+        current_user, EvidenceType.RECYCLER_AUTHORIZATION, db, transition_account_on_failure=True
+    )
 
     record = db.query(RecyclingRecord).filter(
         RecyclingRecord.device_id == device.id,
@@ -244,6 +250,9 @@ def complete_recycling(
     ).first()
     if record is None or record.recycling_status != RecyclingStatus.RECEIVED:
         raise HTTPException(status_code=409, detail="Acknowledge physical receipt before completing recycling.")
+    assert_active_role_evidence(
+        current_user, EvidenceType.RECYCLER_AUTHORIZATION, db, transition_account_on_failure=True
+    )
     if record.chain_attempt_status in _UNCERTAIN_ATTEMPTS:
         raise HTTPException(status_code=409, detail="A previous ledger attempt requires reconciliation. Do not retry recycling automatically.")
 
@@ -317,6 +326,31 @@ def complete_recycling(
         record.certificate_id = certificate_id
         record.completion_date = datetime.now(timezone.utc)
         record.chain_attempt_status = "COMPLETED"
+        # Notify previous owners and verifiers who participated in this device's
+        # completed handoffs. The recycler performed the action and is not sent a
+        # redundant self-notification.
+        completed_transfers = db.query(Transfer).filter(
+            Transfer.device_id == device.id,
+            Transfer.status == TransferStatus.COMPLETED,
+        ).all()
+        recipients = set()
+        for prior_transfer in completed_transfers:
+            recipients.update(uid for uid in (prior_transfer.from_user_id, prior_transfer.to_user_id) if uid)
+            if prior_transfer.verifier_id:
+                recipients.add(prior_transfer.verifier_id)
+        recipients.discard(current_user.id)
+        for recipient_id in recipients:
+            create_notification(
+                db,
+                user_id=recipient_id,
+                notification_type="device_recycled",
+                title="Device reached end of life",
+                message=f"{device.brand_name} · {device.public_id} has a recorded recycling-completion event. The TraceLoop record is not a government-issued recycling certificate.",
+                action_path="/track?id=" + device.public_id,
+                public_device_id=device.public_id,
+                entity_id=record.id,
+                dedupe_key=f"device:{device.id}:recycled:{recipient_id}",
+            )
         db.commit()
     except Exception:
         db.rollback()

@@ -39,6 +39,9 @@ from database import (
 from services.device_identity import is_public_id
 from services.ledger_service import LedgerSubmissionError, ledger_service
 from services.device_policy import require_confirmed_v2_device, is_confirmed_v2_device
+from services.notification_service import create_notification
+from routes.evidence_routes import assert_active_role_evidence
+from database import EvidenceType
 
 router = APIRouter(prefix="/verification", tags=["Verification"])
 logger = logging.getLogger(__name__)
@@ -186,6 +189,18 @@ def create_verification_request(
     )
     db.add(request)
     try:
+        db.flush()
+        create_notification(
+            db,
+            user_id=verifier.id,
+            notification_type="verification_requested",
+            title="New inspection request",
+            message=f"{device.brand_name} · {device.public_id} was shared with your service centre for verification. Review the request before inspecting the physical device.",
+            action_path="/dashboard",
+            public_device_id=device.public_id,
+            entity_id=request.id,
+            dedupe_key=f"verification:{request.id}:requested:{verifier.id}",
+        )
         db.commit()
         db.refresh(request)
     except Exception as exc:
@@ -244,6 +259,9 @@ def reject_verification_request(
     """Assigned verifier can decline a physically presented device before stamping."""
     _require_active_verifier(current_user)
     request, device = _get_assigned_request_for_verifier(db, verification_id, current_user.id)
+    assert_active_role_evidence(
+        current_user, EvidenceType.BRAND_AUTHORIZATION, db, transition_account_on_failure=True
+    )
     if request.status != VerificationStatus.PENDING or request.config_snapshot is not None:
         raise HTTPException(status_code=409, detail="Only an unattempted request can be rejected.")
 
@@ -252,6 +270,17 @@ def reject_verification_request(
         raise HTTPException(status_code=422, detail="A rejection reason is required.")
     request.status = VerificationStatus.REJECTED
     request.rejection_reason = reason
+    create_notification(
+        db,
+        user_id=request.requested_by,
+        notification_type="verification_rejected",
+        title="Inspection request declined",
+        message=f"The inspection request for {device.brand_name} · {device.public_id} was declined. Reason: {reason} Review the reason, then update the request or share the passport again when the device is ready.",
+        action_path="/dashboard",
+        public_device_id=device.public_id,
+        entity_id=request.id,
+        dedupe_key=f"verification:{request.id}:rejected:{request.requested_by}",
+    )
     try:
         db.commit()
     except Exception as exc:
@@ -350,6 +379,9 @@ def issue_verification_stamp(
 
     if request.verifier_id != current_user.id:
         raise HTTPException(status_code=403, detail="This request is not assigned to you.")
+    assert_active_role_evidence(
+        current_user, EvidenceType.BRAND_AUTHORIZATION, db, transition_account_on_failure=True
+    )
     if request.status == VerificationStatus.STAMPED:
         raise HTTPException(status_code=409, detail="This verification request has already been stamped.")
     if request.status not in _ACTIVE_REQUEST_STATUSES:
@@ -512,6 +544,17 @@ def issue_verification_stamp(
     device.stamp_valid = True
     device.last_verified_at = stamped_at
     device.last_verified_by = current_user.id
+    create_notification(
+        db,
+        user_id=request.requested_by,
+        notification_type="verification_completed",
+        title="Device verification completed",
+        message=f"{device.brand_name} · {device.public_id} received a verification stamp. Review the passport and stamp details before starting a transfer.",
+        action_path="/track?id=" + device.public_id,
+        public_device_id=device.public_id,
+        entity_id=request.id,
+        dedupe_key=f"verification:{request.id}:stamped:{request.requested_by}",
+    )
     try:
         db.commit()
         db.refresh(request)

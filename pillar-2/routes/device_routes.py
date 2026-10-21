@@ -37,6 +37,10 @@ from database import (
     KYCDocument,
     LedgerEvent,
     RegistrationStatus,
+    Transfer,
+    TransferStatus,
+    RecyclingRecord,
+    RecyclingStatus,
     User,
     UserRole,
     get_db,
@@ -48,6 +52,7 @@ from services.device_identity import (
     resolve_brand,
 )
 from services.ledger_service import LedgerSubmissionError, ledger_service
+from services.notification_service import create_notification
 
 router = APIRouter(prefix="/devices", tags=["Devices"])
 logger = logging.getLogger(__name__)
@@ -114,6 +119,18 @@ def _persist_registration_outcome(
             device.registration_confirmed_round = int(confirmed_round)
         device.registration_error_code = error_code
         device.registration_updated_at = datetime.now(timezone.utc)
+        if registration_status == RegistrationStatus.CONFIRMED:
+            create_notification(
+                db,
+                user_id=device.current_owner_id,
+                notification_type="device_registered",
+                title="Device passport registered",
+                message=f"{device.brand_name} · {device.public_id} has a confirmed ledger registration. A verification stamp is a separate step and may still be required before a handoff.",
+                action_path="/track?id=" + device.public_id,
+                public_device_id=device.public_id,
+                entity_id=device.id,
+                dedupe_key=f"device:{device.id}:registration-confirmed:{device.current_owner_id}",
+            )
         db.commit()
         return True
     except Exception as exc:
@@ -769,6 +786,41 @@ def get_public_passport(
             "timestamp": timestamp,
         })
 
+    # Public-passport circularity metrics deliberately report observed events only.
+    # No generic laptop weight or per-resale carbon-saving multiplier is assumed.
+    try:
+        completed_transfer_count = int(
+            db.query(Transfer)
+            .filter(Transfer.device_id == device.id, Transfer.status == TransferStatus.COMPLETED)
+            .count()
+        )
+        recycling_rows = db.query(RecyclingRecord).filter(
+            RecyclingRecord.device_id == device.id
+        ).all()
+        confirmed_recycling = any(
+            str(_enum_value(row.recycling_status)).upper() == RecyclingStatus.RECYCLED.value
+            and row.completion_date is not None
+            for row in recycling_rows
+        )
+        climate_circularity = {
+            "completed_transfer_count": completed_transfer_count,
+            "confirmed_recycling_completion": confirmed_recycling,
+            "measured_e_waste_mass_kg": None,
+            "estimated_co2e_avoided_kg": None,
+            "methodology_status": "COUNTS_ONLY_NO_UNVALIDATED_IMPACT_ESTIMATES",
+            "note": "Observed lifecycle counts only. Avoided CO2e and e-waste mass are not estimated without measured device mass, recovery data, and a validated methodology.",
+        }
+    except Exception as exc:
+        logger.warning("Public passport circularity query unavailable (exception_type=%s)", type(exc).__name__)
+        climate_circularity = {
+            "completed_transfer_count": None,
+            "confirmed_recycling_completion": None,
+            "measured_e_waste_mass_kg": None,
+            "estimated_co2e_avoided_kg": None,
+            "methodology_status": "SOURCE_UNAVAILABLE",
+            "note": "Circularity metrics are unavailable; unavailable values are not treated as zero.",
+        }
+
     return standard_response({
         "device_id": device.public_id,
         "public_id": device.public_id,
@@ -788,6 +840,7 @@ def get_public_passport(
         "transfers": history_payload,
         "events": event_payload,
         "total_events": len(event_payload),
+        "climate_circularity_impact": climate_circularity,
         "message": (
             "V1 Legacy Test Passport — read-only. This synthetic passport ID is an off-chain display ID; "
             "historical chain state and mirrored lifecycle events are shown only where available."

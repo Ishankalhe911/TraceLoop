@@ -12,6 +12,9 @@ from services.ledger_service import LedgerSubmissionError
 from auth import get_current_user, RequireRole
 from services.ledger_service import ledger_service
 from services.device_policy import require_confirmed_v2_device, is_confirmed_v2_device
+from services.notification_service import create_notification
+from routes.evidence_routes import assert_active_role_evidence
+from database import EvidenceType
 
 router = APIRouter(prefix="/transfers", tags=["Transfers & Marketplace"])
 
@@ -322,15 +325,43 @@ def initiate_transfer(
     device.is_for_sale = False
 
     try:
+        # The current valid stamp identifies the verifier the owner selected for
+        # this inspection. If the owner wants another service centre, they must
+        # explicitly re-verify there first; the transfer is never globally claimable.
+        assigned_verifier = device.last_verified_by
+        assigned_user = db.query(User).filter(User.id == assigned_verifier).first() if assigned_verifier else None
+        if (
+            assigned_user is None
+            or assigned_user.role != UserRole.VERIFIABLE
+            or assigned_user.status != UserStatus.ACTIVE
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="No active verifier is recorded for the current verification stamp. Re-verify with the intended service centre before initiating a transfer.",
+            )
+
         new_transfer = Transfer(
             device_id=device.id,
             from_user_id=current_user.id,
             to_user_id=recipient_id,
+            assigned_verifier_id=assigned_user.id,
             status=TransferStatus.PENDING,
             velocity_flagged=velocity_flagged,
             count_flagged=count_flagged
         )
         db.add(new_transfer)
+        db.flush()
+        create_notification(
+            db,
+            user_id=receiver.id,
+            notification_type="transfer_received",
+            title="Incoming transfer request",
+            message=f"{device.brand_name} · {device.public_id} is awaiting your acceptance. Review the handoff in Transfers.",
+            action_path="/transfer",
+            public_device_id=device.public_id,
+            entity_id=new_transfer.id,
+            dedupe_key=f"transfer:{new_transfer.id}:initiated:{receiver.id}",
+        )
         db.commit()
         db.refresh(new_transfer)
 
@@ -394,9 +425,10 @@ def get_transfers_pending_completion(
     db: Session = Depends(get_db),
     current_user: User = Depends(RequireRole([UserRole.VERIFIABLE]))
 ):
-    """Verifier inbox — all IN_PROGRESS transfers waiting for physical inspection."""
+    """Only show in-progress transfers explicitly assigned to this verifier."""
     transfers = db.query(Transfer).filter(
-        Transfer.status == TransferStatus.IN_PROGRESS
+        Transfer.status == TransferStatus.IN_PROGRESS,
+        Transfer.assigned_verifier_id == current_user.id,
     ).order_by(Transfer.initiated_at.desc()).all()
 
     results = []
@@ -454,6 +486,19 @@ def accept_transfer(
         )
 
     transfer.status = TransferStatus.IN_PROGRESS
+    device = db.query(Device).filter(Device.id == transfer.device_id).first()
+    if device:
+        create_notification(
+            db,
+            user_id=transfer.from_user_id,
+            notification_type="transfer_accepted",
+            title="Transfer accepted",
+            message=f"The recipient accepted {device.brand_name} · {device.public_id}. An authorized service centre must still inspect the device and complete the handoff.",
+            action_path="/transfer",
+            public_device_id=device.public_id,
+            entity_id=transfer.id,
+            dedupe_key=f"transfer:{transfer.id}:accepted:{transfer.from_user_id}",
+        )
     db.commit()
 
     return standard_response({
@@ -509,6 +554,18 @@ def cancel_transfer(
     # Restore device to VERIFIED — chain state unchanged, only DB.
     device.status = DeviceStatus.VERIFIED
     # Don't restore is_for_sale — seller must re-list explicitly.
+    for participant_id in {transfer.from_user_id, transfer.to_user_id} - {current_user.id, None}:
+        create_notification(
+            db,
+            user_id=participant_id,
+            notification_type="transfer_cancelled",
+            title="Transfer cancelled",
+            message=f"The transfer for {device.brand_name} · {device.public_id} was cancelled before on-chain completion.",
+            action_path="/track?id=" + device.public_id,
+            public_device_id=device.public_id,
+            entity_id=transfer.id,
+            dedupe_key=f"transfer:{transfer.id}:cancelled:{participant_id}",
+        )
 
     db.commit()
 
@@ -537,6 +594,14 @@ def complete_transfer(
     if not transfer:
         raise HTTPException(status_code=404, detail="Transfer record not found.")
 
+    # Fail closed: assignment is distinct from the verifier who completes it.
+    # This check must happen before any chain preflight or submission.
+    if transfer.assigned_verifier_id != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="This transfer is not assigned to your service centre. The owner must re-verify with the intended centre before transfer initiation.",
+        )
+
     # Hard block — buyer must have accepted first
     if transfer.status != TransferStatus.IN_PROGRESS:
         raise HTTPException(
@@ -550,6 +615,9 @@ def complete_transfer(
         raise HTTPException(status_code=404, detail="Device not found.")
 
     require_confirmed_registration(device, "transfer completion")
+    assert_active_role_evidence(
+        current_user, EvidenceType.BRAND_AUTHORIZATION, db, transition_account_on_failure=True
+    )
 
     # Stamp TTL check
     verify_stamp_validity(device, db)
@@ -651,6 +719,28 @@ def complete_transfer(
         transfer.verifier_id = current_user.id
         transfer.completed_at = datetime.now(timezone.utc)
         transfer.chain_attempt_status = "COMPLETED"
+        create_notification(
+            db,
+            user_id=transfer.from_user_id,
+            notification_type="transfer_completed",
+            title="Ownership transfer completed",
+            message=f"{device.brand_name} · {device.public_id} was transferred to the recipient. The previous ownership record remains in its lifecycle history.",
+            action_path="/track?id=" + device.public_id,
+            public_device_id=device.public_id,
+            entity_id=transfer.id,
+            dedupe_key=f"transfer:{transfer.id}:completed:{transfer.from_user_id}",
+        )
+        create_notification(
+            db,
+            user_id=transfer.to_user_id,
+            notification_type="transfer_completed",
+            title="Device transferred to you",
+            message=f"{device.brand_name} · {device.public_id} is now recorded under your account. Review the passport and its verification status before your next handoff.",
+            action_path="/track?id=" + device.public_id,
+            public_device_id=device.public_id,
+            entity_id=transfer.id,
+            dedupe_key=f"transfer:{transfer.id}:completed:{transfer.to_user_id}",
+        )
         db.commit()
     except Exception:
         db.rollback()

@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 import requests
 from urllib.parse import quote
+from services.notification_service import create_notification
 
 from auth import JWT_SECRET, decode_token, get_current_user_any_status
 from database import (
@@ -213,11 +214,11 @@ def _append_review_note(existing: Optional[str], note: str) -> str:
 
 
 def sync_expired_evidence_for_user(user: User, db: Session) -> bool:
-    """Synchronize certificate expiry when time-bound enforcement is enabled.
+    """Apply the future expiry policy only when an approved credential is known to expire.
 
-    Phase 1 deliberately disables this policy, so this is currently a no-op. Keeping
-    the helper preserves the existing imports/call sites and allows the later expiry
-    policy to be enabled consistently once its workflow is implemented end to end.
+    A missing EvidenceRecord is not treated as proof of expiry: it may be a legacy
+    data-mapping issue and must be reviewed rather than silently changing account
+    status on profile/list reads. Time-bound enforcement remains disabled for Phase 4.
     """
     if not TIME_BOUND_ENFORCEMENT_ENABLED:
         return False
@@ -237,7 +238,10 @@ def sync_expired_evidence_for_user(user: User, db: Session) -> bool:
         )
         .all()
     )
-
+    # No credential row is a credential-review issue, not an expiry event. Active
+    # status is changed for the specific case where a previously verified credential
+    # was present and the configured expiry policy has now invalidated it.
+    had_verified_credential = bool(verified_records)
     changed = False
     has_valid_verified = False
     for rec in verified_records:
@@ -255,19 +259,42 @@ def sync_expired_evidence_for_user(user: User, db: Session) -> bool:
             rec.review_notes = _append_review_note(rec.review_notes, reason)
             changed = True
         else:
-            # Expiry is optional for credential types not explicitly time-bound.
             has_valid_verified = True
 
-    if not has_valid_verified and user.status == UserStatus.ACTIVE:
+    transitioned_to_kyc = (
+        had_verified_credential
+        and not has_valid_verified
+        and user.status == UserStatus.ACTIVE
+    )
+    if transitioned_to_kyc:
         user.status = UserStatus.KYC_IN_PROGRESS
         user.admin_approved = False
+        create_notification(
+            db,
+            user_id=user.id,
+            notification_type="credential_expired",
+            title="Role credential needs renewal",
+            message=(
+                f"Your approved {required_type.value} credential is no longer valid under the configured expiry policy. "
+                "Protected role actions are paused. Upload a renewed document in onboarding and wait for review."
+            ),
+            action_path="/onboarding",
+            entity_id=next((rec.id for rec in verified_records if rec.verification_status == EvidenceVerificationStatus.EXPIRED), None),
+            dedupe_key=f"credential-expiry:{user.id}:{required_type.value}:{now_utc.date().isoformat()}",
+        )
         changed = True
 
     if changed:
         db.commit()
     return changed
 
-def assert_active_role_evidence(user: User, required_type: EvidenceType, db: Session) -> EvidenceRecord:
+def assert_active_role_evidence(
+    user: User,
+    required_type: EvidenceType,
+    db: Session,
+    *,
+    transition_account_on_failure: bool = False,
+) -> EvidenceRecord:
     """Return a valid verified credential, or block the protected operation.
 
     A valid older credential remains usable while a renewal is pending/rejected, until
@@ -275,7 +302,11 @@ def assert_active_role_evidence(user: User, required_type: EvidenceType, db: Ses
     effect after its review. A revocation made after the candidate credential was
     verified invalidates that older candidate.
     """
-    sync_expired_evidence_for_user(user, db)
+    # Do not synchronize expiry or mutate account state as a side effect of a listing
+    # or credential lookup. The operational caller may explicitly opt into KYC
+    # transition after this check establishes that no valid credential exists.
+    if transition_account_on_failure:
+        sync_expired_evidence_for_user(user, db)
 
     records = (
         db.query(EvidenceRecord)
@@ -288,10 +319,10 @@ def assert_active_role_evidence(user: User, required_type: EvidenceType, db: Ses
         .all()
     )
     if not records:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"No uploaded {required_type.value} evidence record found for your account.",
-        )
+        detail = f"No uploaded {required_type.value} evidence record found for your account."
+        if transition_account_on_failure:
+            _move_active_role_account_to_kyc(user, required_type, db, detail)
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
 
     now_utc = datetime.now(timezone.utc)
     revocation_times = [
@@ -321,16 +352,30 @@ def assert_active_role_evidence(user: User, required_type: EvidenceType, db: Ses
 
     if valid_verified:
         # Prefer the most recently reviewed credential, not merely the newest upload.
-        return max(
+        credential = max(
             valid_verified,
             key=lambda rec: _make_utc(rec.reviewed_at) or _make_utc(rec.created_at) or datetime.min.replace(tzinfo=timezone.utc),
         )
-
-    # Do not let an account continue as active when no currently valid role credential exists.
-    if user.status == UserStatus.ACTIVE and user.role in ROLE_CREDENTIAL_FOR_ROLE:
-        user.status = UserStatus.KYC_IN_PROGRESS
-        user.admin_approved = False
-        db.commit()
+        if transition_account_on_failure:
+            # A protected operation checks the stored evidence itself. A confirmed
+            # missing object or hash/size mismatch is a genuine credential-integrity
+            # failure and pauses the account for review. Storage/network errors only
+            # block this operation; they must never mutate account approval state.
+            try:
+                verify_evidence_file_integrity(credential)
+            except HTTPException as exc:
+                if exc.status_code in {404, 409}:
+                    detail = (
+                        f"The approved {required_type.value} document is missing or failed its integrity check. "
+                        "The protected operation was blocked and the account was moved to KYC review. "
+                        "Upload corrected evidence and wait for administrator review."
+                    )
+                    _move_active_role_account_to_kyc(user, required_type, db, detail)
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail) from None
+                # For example, HTTP 502 indicates storage could not be reached. Keep
+                # the account status untouched so a temporary outage cannot revoke trust.
+                raise
+        return credential
 
     latest = records[0]
     if latest.verification_status == EvidenceVerificationStatus.PENDING:
@@ -347,7 +392,95 @@ def assert_active_role_evidence(user: User, required_type: EvidenceType, db: Ses
     else:
         detail = f"No currently valid VERIFIED {required_type.value} credential is available. Re-verification is required."
 
+    if transition_account_on_failure:
+        _move_active_role_account_to_kyc(user, required_type, db, detail)
+
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
+
+
+def _move_active_role_account_to_kyc(
+    user: User,
+    required_type: EvidenceType,
+    db: Session,
+    reason: str,
+) -> None:
+    """Pause an active role account only after an operational check proves a credential gap."""
+    if user.status != UserStatus.ACTIVE or user.role not in ROLE_CREDENTIAL_FOR_ROLE:
+        return
+    user.status = UserStatus.KYC_IN_PROGRESS
+    user.admin_approved = False
+    create_notification(
+        db,
+        user_id=user.id,
+        notification_type="credential_review_required",
+        title="Role credential review required",
+        message=(
+            f"TraceLoop could not find a currently valid {required_type.value} credential for a protected operation. "
+            f"That operation was blocked and your account was moved to KYC review. Details: {reason} "
+            "Upload corrected or renewed evidence in onboarding; protected actions remain unavailable until review and approval."
+        ),
+        action_path="/onboarding",
+        dedupe_key=f"credential-gap:{user.id}:{required_type.value}:{datetime.now(timezone.utc).isoformat()}",
+    )
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Could not persist KYC transition for user %s after credential failure", user.id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="The protected action was blocked, but the account review state could not be saved. Retry later.",
+        )
+
+
+def _check_existing_role_credential_before_replacement_upload(
+    user: User, evidence_type: EvidenceType, db: Session
+) -> None:
+    """Force re-review when an ACTIVE verifier/recycler's approved file is confirmed bad.
+
+    An ordinary renewal does not suspend an active account while its approved evidence
+    remains intact. If a role-credential replacement is submitted and the prior approved
+    credential is missing/tampered, transition the account to KYC before accepting the
+    new row. That prevents upload+review alone from bypassing the separate account
+    approval step after a confirmed credential-integrity failure. Transient storage
+    errors do not demote the account; protected operations still fail closed on retry.
+    """
+    if user.status != UserStatus.ACTIVE or user.role not in {UserRole.VERIFIABLE, UserRole.RECYCLER}:
+        return
+    required_type = ROLE_CREDENTIAL_FOR_ROLE.get(user.role)
+    if required_type is None or evidence_type != required_type:
+        return
+
+    try:
+        credential = assert_active_role_evidence(user, required_type, db)
+    except HTTPException as exc:
+        _move_active_role_account_to_kyc(
+            user,
+            required_type,
+            db,
+            f"A replacement credential was submitted, but no currently valid approved credential was available: {exc.detail}",
+        )
+        return
+
+    try:
+        verify_evidence_file_integrity(credential)
+    except HTTPException as exc:
+        if exc.status_code in {404, 409}:
+            _move_active_role_account_to_kyc(
+                user,
+                required_type,
+                db,
+                f"A replacement credential was submitted and the previously approved file is confirmed missing or tampered: {exc.detail}",
+            )
+        else:
+            # Do not turn an infrastructure/configuration outage into revocation. The new
+            # evidence can still be uploaded, but each protected operation will independently
+            # verify the credential/file and fail closed if its check cannot complete.
+            logger.warning(
+                "Could not check existing credential for user %s before replacement upload: %s",
+                user.id,
+                exc.detail,
+            )
 
 
 def _storage_configuration() -> tuple[str, str, str]:
@@ -506,6 +639,24 @@ def evidence_object_exists(file_reference: str) -> bool:
     )
 
 
+def evidence_file_presence_status(evidence: Optional[EvidenceRecord]) -> tuple[str, Optional[str]]:
+    """Read-only report of object existence for admin lists; never changes account state."""
+    if evidence is None:
+        return "NOT_CHECKED_NO_VALID_CREDENTIAL", None
+    try:
+        exists = evidence_object_exists(evidence.file_reference)
+    except HTTPException as exc:
+        detail = str(exc.detail)
+        if exc.status_code == 404 and "reference is invalid" in detail.lower():
+            return "INVALID_REFERENCE", detail
+        if exc.status_code >= 500:
+            return "STORAGE_UNAVAILABLE", detail
+        return "CHECK_FAILED", detail
+    if not exists:
+        return "MISSING", "The approved evidence file is missing from private storage."
+    return "PRESENT", None
+
+
 def verify_evidence_file_integrity(evidence: EvidenceRecord) -> bytes:
     """Download and hash the private object, returning verified bytes or raising an error."""
     content = download_private_evidence_object(evidence.file_reference)
@@ -541,9 +692,9 @@ async def upload_evidence_file(
     # Run expiry synchronization before staging any new rows; the helper may commit.
     sync_expired_evidence_for_user(current_user, db)
 
-    # A genuinely REJECTED/SUSPENDED account cannot self-reactivate by uploading a file.
-    # Admin review must keep ordinary document rejection separate from account rejection.
-    if current_user.status not in {UserStatus.KYC_IN_PROGRESS, UserStatus.ACTIVE}:
+    # REJECTED users may submit corrected evidence to reopen onboarding, but cannot
+    # regain protected access by uploading. SUSPENDED accounts require explicit admin action.
+    if current_user.status not in {UserStatus.KYC_IN_PROGRESS, UserStatus.ACTIVE, UserStatus.REJECTED}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Account in status {current_user.status.value} cannot upload evidence documents.",
@@ -557,6 +708,11 @@ async def upload_evidence_file(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Role {current_user.role.value} cannot upload {ev_type.value}. Allowed: {allowed_names}",
         )
+
+    # If an already-active verifier/recycler is replacing role evidence, confirm the old
+    # approved evidence remains available. A confirmed gap requires admin re-approval; a
+    # temporary storage outage alone must not downgrade the account.
+    _check_existing_role_credential_before_replacement_upload(current_user, ev_type, db)
 
     clean_serial = normalize_serial(serial_for_device)
     if ev_type == EvidenceType.PURCHASE_PROOF:
@@ -678,9 +834,40 @@ async def upload_evidence_file(
             legacy_kyc_doc_id=legacy_doc_id,
         )
         db.add(ev_record)
+        # An explicit corrected-evidence submission is the user's request to reopen a
+        # REJECTED account's KYC flow. It does not activate them; admin review is still required.
+        was_rejected = current_user.status == UserStatus.REJECTED
+        if was_rejected:
+            current_user.status = UserStatus.KYC_IN_PROGRESS
+            current_user.admin_approved = False
+
+        if was_rejected:
+            submission_message = (
+                f"Your corrected {ev_type.value} evidence was received. Your account has returned to KYC_IN_PROGRESS; "
+                "protected actions remain locked until the evidence is reviewed and the required approval is completed."
+            )
+        elif current_user.status == UserStatus.ACTIVE:
+            submission_message = (
+                f"Your {ev_type.value} evidence was submitted for review. Your existing ACTIVE account status is unchanged "
+                "while this document is reviewed; only an explicit admin action or a confirmed credential-validity failure changes access."
+            )
+        else:
+            submission_message = f"Your {ev_type.value} evidence was submitted for admin review. Check onboarding for the decision and next step."
+
+        create_notification(
+            db,
+            user_id=current_user.id,
+            notification_type="evidence_submitted",
+            title="Evidence submitted for review",
+            message=submission_message,
+            action_path="/onboarding",
+            entity_id=ev_record.id,
+            dedupe_key=f"evidence:{ev_record.id}:submitted:{current_user.id}",
+        )
         db.commit()
         db_committed = True
         db.refresh(ev_record)
+        db.refresh(current_user)
 
         return standard_response(
             {
@@ -693,7 +880,11 @@ async def upload_evidence_file(
                 "file_sha256": computed_sha256,
                 "status": ev_record.verification_status.value,
                 "user_status": current_user.status.value,
-                "message": "Document uploaded privately. Any supplied expiry date remains unverified until admin review.",
+                "message": (
+                    "Corrected evidence submitted; your account is back in KYC review and is not yet active."
+                    if was_rejected
+                    else "Document uploaded privately. Any supplied expiry date remains unverified until admin review."
+                ),
             },
             201,
         )
