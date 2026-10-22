@@ -454,7 +454,7 @@ def get_recent_events(
     """
     Latest on-chain events mirrored from Algorand.
     Each event includes a direct link to Pera Explorer / Lora for verification.
-    Covers the PS3 requirement for real-time regulatory visibility.
+    Supports the IEEE ClimateChain Track 3 demonstration with recorded lifecycle-event visibility; it does not imply regulatory certification.
     """
     events = (
         db.query(LedgerEvent)

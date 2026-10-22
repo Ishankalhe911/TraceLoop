@@ -5,6 +5,7 @@ import {
   CircleAlert, ClipboardCheck, Copy, FileCheck2, FileText, History, Laptop, Leaf,
   LockKeyhole, PackageCheck, Plus, RefreshCw, Recycle, Search, ShieldCheck, Smartphone,
   Trash2, UploadCloud, UserRoundCheck, Users, Wrench, XCircle, BookOpen, CircleHelp,
+  Repeat2, Scale,
 } from 'lucide-react';
 import { api, apiBlob, apiData, displayState, formatDate, normalizeSerial } from './api.js';
 import { useAuth, useToast } from './context.jsx';
@@ -13,7 +14,20 @@ import {
   Panel, SelectInput, TextArea, TextInput,
 } from './ui.jsx';
 
-const DEMO_PASSPORT_ID = String(import.meta.env.VITE_DEMO_PASSPORT_ID || '').trim().toUpperCase();
+const CONFIGURED_DEMO_PASSPORT_IDS = String(import.meta.env.VITE_DEMO_PASSPORT_IDS || '')
+  .split(',').map((value) => value.trim().toUpperCase()).filter(Boolean);
+const DEMO_PASSPORT_ID = String(
+  import.meta.env.VITE_DEMO_PASSPORT_ID || CONFIGURED_DEMO_PASSPORT_IDS[0] || ''
+).trim().toUpperCase();
+// The impact panel links to the TestNet explorer, so require an explicit build-time
+// declaration rather than silently labelling an unknown API environment as TestNet.
+const DEMO_NETWORK = String(import.meta.env.VITE_DEMO_NETWORK || '').trim().toUpperCase();
+// Only explicitly configured, public demo passports are queried by the homepage.
+// Their public endpoint returns confirmed ledger-mirror events; no records are fabricated.
+const DEMO_PASSPORT_IDS = Array.from(new Set([
+  ...CONFIGURED_DEMO_PASSPORT_IDS,
+  DEMO_PASSPORT_ID,
+].filter(Boolean))).slice(0, 10);
 const MAX_EVIDENCE_BYTES = 5 * 1024 * 1024;
 
 const ROLE_OPTIONS = [
@@ -71,6 +85,126 @@ function FullPageLoader({ label = 'Loading TraceLoop…' }) {
   return <div className="page-loader"><span className="spinner" /><p>{label}</p></div>;
 }
 
+function PublicClimateImpactSection() {
+  const [snapshot, setSnapshot] = useState({ status: 'loading', passports: [], failedCount: 0 });
+
+  useEffect(() => {
+    let active = true;
+    const loadDemoPassports = async () => {
+      if (DEMO_NETWORK !== 'TESTNET') {
+        setSnapshot({ status: 'network-not-confirmed', passports: [], failedCount: 0 });
+        return;
+      }
+      if (!DEMO_PASSPORT_IDS.length) {
+        setSnapshot({ status: 'not-configured', passports: [], failedCount: 0 });
+        return;
+      }
+
+      const results = await Promise.all(DEMO_PASSPORT_IDS.map(async (passportId) => {
+        try {
+          const record = await apiData(`/devices/public/${encodeURIComponent(passportId)}`, { auth: false });
+          const returnedId = String(record?.public_id || record?.device_id || '').trim().toUpperCase();
+          if (returnedId !== passportId || !Array.isArray(record?.events)) return null;
+          // Only confirmed V2 operational passports belong in the TestNet demo tally.
+          // Synthetic V1 legacy IDs and pending/read-only records are not demo activity.
+          if (record?.identity_version !== 'V2_PUBLIC_ID'
+            || String(record?.registration_status || '').toUpperCase() !== 'CONFIRMED'
+            || record?.is_legacy_test === true
+            || record?.read_only === true) return null;
+          return record;
+        } catch {
+          return null;
+        }
+      }));
+
+      if (!active) return;
+      const passports = results.filter(Boolean);
+      const failedCount = results.length - passports.length;
+      setSnapshot({
+        status: passports.length === 0 ? 'unavailable' : failedCount ? 'partial' : 'ready',
+        passports,
+        failedCount,
+      });
+    };
+
+    loadDemoPassports();
+    return () => { active = false; };
+  }, []);
+
+  // The public-passport endpoint returns only CONFIRMED ledger-mirror events.
+  // Count unique transaction hashes and never infer carbon or mass from those events.
+  const confirmedEvents = snapshot.passports.flatMap((passport) => (
+    passport.events || []
+  ).filter((event) => typeof event.tx_hash === 'string' && event.tx_hash.trim()).map((event) => ({
+    ...event,
+    tx_hash: event.tx_hash.trim(),
+    passportId: passport.public_id || passport.device_id,
+  })));
+  const uniqueByTransaction = new Map();
+  confirmedEvents.forEach((event) => {
+    const key = event.tx_hash.toUpperCase();
+    const prior = uniqueByTransaction.get(key);
+    if (!prior || (Date.parse(event.timestamp || '') || 0) > (Date.parse(prior.timestamp || '') || 0)) {
+      uniqueByTransaction.set(key, event);
+    }
+  });
+  const transactions = Array.from(uniqueByTransaction.values()).sort((a, b) => (
+    (Date.parse(b.timestamp || '') || 0) - (Date.parse(a.timestamp || '') || 0)
+  ));
+  const transferTransactions = transactions.filter((event) => String(event.event_type || '').toUpperCase() === 'TRANSFERRED');
+  const recyclingTransactions = transactions.filter((event) => String(event.event_type || '').toUpperCase() === 'RECYCLED');
+  const activeDemoPassports = new Set(transactions.map((event) => event.passportId)).size;
+  const demoPassportLink = DEMO_PASSPORT_ID || DEMO_PASSPORT_IDS[0] || '';
+
+  return <section className="public-impact-section page-wrap" aria-labelledby="public-impact-title">
+    <div className="public-impact-shell">
+      <div className="public-impact-heading">
+        <div className="public-impact-heading-copy">
+          <span className="eyebrow"><Leaf size={14} /> Climate &amp; circularity</span>
+          <h2 id="public-impact-title">Environmental claims start with traceable events.</h2>
+          <p>Explore real, confirmed Algorand TestNet activity recorded for designated TraceLoop virtual-device Passports. We show what the ledger supports—and clearly mark what has not been measured.</p>
+        </div>
+        <div className="public-impact-environment">
+          <Badge tone="amber">DEMO · ALGORAND TESTNET</Badge>
+          <span>Virtual-device records · not production assets</span>
+        </div>
+      </div>
+
+      {snapshot.status === 'loading' && <div className="public-impact-state" role="status"><span className="spinner"/><span>Loading confirmed demo transactions…</span></div>}
+      {snapshot.status === 'network-not-confirmed' && <div className="public-impact-state public-impact-state-note"><strong>Demo network has not been explicitly confirmed for this build.</strong><p>Set <code>VITE_DEMO_NETWORK=TESTNET</code> only when this frontend points at the intended TestNet-backed API. The section will not label activity as TestNet until this is configured.</p></div>}
+      {snapshot.status === 'not-configured' && <div className="public-impact-state public-impact-state-note"><strong>Demo transaction feed is not configured for this deployment.</strong><p>Once designated confirmed V2 virtual-device Passport IDs are configured, this section will show their confirmed TestNet transaction records. No illustrative statistics are substituted.</p></div>}
+      {snapshot.status === 'unavailable' && <div className="public-impact-state public-impact-state-note"><strong>Demo ledger activity is currently unavailable.</strong><p>TraceLoop could not load the configured demo Passports. Counts are not inferred from failed requests or assumed to be zero.</p></div>}
+
+      {(snapshot.status === 'ready' || snapshot.status === 'partial') && <>
+        {snapshot.status === 'partial' && <Notice kind="warning">Some configured demo Passports could not be loaded. The figures below include only records successfully retrieved.</Notice>}
+        <div className="public-impact-metrics">
+          <article className="public-impact-metric"><span className="public-impact-metric-icon"><Activity size={19}/></span><span className="public-impact-metric-label">Confirmed TestNet transactions</span><strong>{transactions.length.toLocaleString()}</strong><small>Unique transaction hashes from confirmed ledger events</small></article>
+          <article className="public-impact-metric"><span className="public-impact-metric-icon"><Repeat2 size={19}/></span><span className="public-impact-metric-label">Recorded ownership transitions</span><strong>{transferTransactions.length.toLocaleString()}</strong><small>Confirmed <code>TRANSFERRED</code> events on configured demo Passports</small></article>
+          <article className="public-impact-metric"><span className="public-impact-metric-icon"><Recycle size={19}/></span><span className="public-impact-metric-label">Recorded recycling transactions</span><strong>{recyclingTransactions.length.toLocaleString()}</strong><small>Confirmed <code>RECYCLED</code> ledger events; not independent proof of physical recycling</small></article>
+          <article className="public-impact-metric"><span className="public-impact-metric-icon"><Laptop size={19}/></span><span className="public-impact-metric-label">Passports with confirmed activity</span><strong>{activeDemoPassports.toLocaleString()}</strong><small>Configured virtual devices with at least one confirmed event</small></article>
+        </div>
+
+        <div className="public-impact-detail-grid">
+          <div className="public-impact-detail-card"><div><Leaf size={18}/><strong>CO₂e avoided</strong></div><strong className="impact-unavailable">Not calculated</strong><p>No validated counterfactual lifecycle methodology or device-specific evidence is currently available.</p></div>
+          <div className="public-impact-detail-card"><div><Scale size={18}/><strong>Physical e-waste mass</strong></div><strong className="impact-unavailable">Not measured</strong><p>TestNet events do not establish that a physical device was recycled or that any material mass was diverted.</p></div>
+        </div>
+
+        <div className="public-impact-recent">
+          <div className="public-impact-recent-heading"><div><h3>Recent confirmed demo activity</h3><p>Transaction references are returned from confirmed ledger records.</p></div><Badge>{transactions.length} transactions</Badge></div>
+          {transactions.length ? <div className="public-impact-transaction-list">{transactions.slice(0, 4).map((event) => <div className="public-impact-transaction" key={event.tx_hash}>
+            <div className="public-impact-transaction-icon"><History size={16}/></div>
+            <div className="public-impact-transaction-main"><strong>{displayState(event.event_type || 'LIFECYCLE EVENT')}</strong><small>{formatDate(event.timestamp)}{event.block_number != null ? ` · round ${event.block_number}` : ''}</small><small className="mono">{event.tx_hash.slice(0, 10)}…{event.tx_hash.slice(-6)}</small></div>
+            <div className="public-impact-transaction-links"><Link to={`/track?id=${encodeURIComponent(event.passportId)}`}>Passport</Link><a href={`https://lora.algokit.io/testnet/transaction/${encodeURIComponent(event.tx_hash)}`} target="_blank" rel="noreferrer">View transaction <ArrowRight size={13}/></a></div>
+          </div>)}</div> : <div className="public-impact-state-note"><strong>No confirmed lifecycle transactions are available for the configured demo Passports yet.</strong><p>The section will populate only when the public Passport endpoint returns confirmed transaction references.</p></div>}
+        </div>
+      </>}
+
+      <p className="public-impact-disclaimer">Demo activity is evidence that TraceLoop recorded TestNet transactions for virtual devices. It does not represent production devices, measured physical reuse or recycling, avoided emissions, or verified e-waste diversion.</p>
+      <div className="public-impact-actions">{demoPassportLink && <Link className="button button-primary" to={DEMO_PASSPORT_ID ? '/track?demo=1' : `/track?id=${encodeURIComponent(demoPassportLink)}`}>Explore demo Passport <ArrowRight size={15}/></Link>}<Link className="button button-secondary" to="/track">Track a Passport <ArrowRight size={15}/></Link></div>
+    </div>
+  </section>;
+}
+
 export function LandingPage() {
   const { profile } = useAuth();
   return <>
@@ -79,6 +213,7 @@ export function LandingPage() {
       <div className="hero-visual"><div className="device-illustration"><div className="device-camera" /><div className="device-screen"><div className="device-screen-top"><span>TRACELOOP PASSPORT</span><Badge tone="green">V2</Badge></div><div className="device-art"><Laptop size={82} strokeWidth={1.2} /></div><div className="screen-lines"><i /><i /><i /></div><div className="screen-state"><span className="state-dot" /> Lifecycle record ready</div></div><div className="device-base" /></div><div className="floating-chip chip-top"><ShieldCheck size={16} /><span><strong>Verified events</strong><small>Readable history</small></span></div><div className="floating-chip chip-bottom"><Recycle size={16} /><span><strong>End-of-life ready</strong><small>Recorded responsibly</small></span></div><div className="hero-orbit orbit-one" /><div className="hero-orbit orbit-two" /></div>
     </section>
     <section className="value-section page-wrap"><div className="section-heading"><span className="eyebrow">One lifecycle passport</span><h2>Built around the people who handle devices.</h2><p>The workflow stays physical-first. TraceLoop makes the records and handoffs easier to manage.</p></div><div className="value-grid"><article className="value-card"><span className="value-icon"><Laptop size={21} /></span><h3>Owners & buyers</h3><p>Register a device, share its passport for inspection, transfer ownership, and raise a dispute when something needs review.</p></article><article className="value-card"><span className="value-icon"><ShieldCheck size={21} /></span><h3>Authorized service centres</h3><p>Work from owner-shared inspection requests. Record a stamp only after the physical device has been inspected.</p></article><article className="value-card"><span className="value-icon"><Recycle size={21} /></span><h3>Recycling facilities</h3><p>Manage incoming handoffs, acknowledge physical receipt, and record the terminal recycling event.</p></article></div></section>
+    <PublicClimateImpactSection />
     <section className="closing-cta page-wrap"><div><span className="eyebrow">Start with a passport ID</span><h2>Know what the record says.</h2><p>Look up a passport to review available lifecycle events and the reconciliation between source records.</p></div><Link to="/track" className="button button-light button-lg">Track a passport <ArrowRight size={16} /></Link></section>
   </>;
 }
@@ -175,6 +310,7 @@ export function OnboardingPage() {
   const [error, setError] = useState('');
   const [documents, setDocuments] = useState([]);
   const [submitted, setSubmitted] = useState(false);
+  const [submittedStatus, setSubmittedStatus] = useState('');
   const metadata = ROLE_EVIDENCE[profile?.role] || ROLE_EVIDENCE.BUYER;
 
   const loadDocuments = useCallback(async () => {
@@ -195,18 +331,30 @@ export function OnboardingPage() {
     if (issuer.trim()) form.append('claimed_issuer', issuer.trim());
     if (issuedAt) form.append('issued_at', issuedAt);
     try {
-      await api('/api/v1/evidence/upload', { method: 'POST', body: form });
-      setSubmitted(true); setFile(null); setFileInputKey((key) => key + 1); setSerial(''); setClaimedNumber(''); setIssuer(''); setIssuedAt('');
+      const response = await apiData('/api/v1/evidence/upload', { method: 'POST', body: form });
+      setSubmitted(true);
+      setSubmittedStatus(response.user_status || '');
+      setFile(null); setFileInputKey((key) => key + 1); setSerial(''); setClaimedNumber(''); setIssuer(''); setIssuedAt('');
       await loadDocuments();
-      toast('Evidence submitted for admin review.');
+      toast(response.message || 'Evidence submitted for admin review.');
       await refreshProfile();
     } catch (e) { setError(e.message); }
     finally { setBusy(false); }
   };
 
-  if (profile?.status === 'ACTIVE') return <section className="page-wrap narrow"><Notice kind="success">Your account is active.</Notice><div className="empty-state"><span className="empty-icon"><CheckCircle2 size={24} /></span><h2>You're ready to continue</h2><p>Your account has been approved. Open your workspace to continue your TraceLoop workflow.</p><Link className="button button-primary" to="/dashboard">Open workspace <ArrowRight size={16} /></Link></div></section>;
+  const accountStatus = profile?.status || 'KYC_IN_PROGRESS';
+  const pageTitle = accountStatus === 'ACTIVE' ? 'Manage KYC evidence' : accountStatus === 'REJECTED' ? 'Retry KYC review' : 'Complete your onboarding';
+  const pageDescription = accountStatus === 'ACTIVE'
+    ? 'Submit updated role evidence when a document needs renewal. Your current active status is preserved while a replacement document is reviewed, unless an administrator explicitly requires re-verification or a confirmed credential-validity failure blocks a protected action.'
+    : accountStatus === 'REJECTED'
+      ? 'Your account was rejected. Submit corrected role-specific evidence to request a new review. Submitting does not restore protected access; admin approval is still required.'
+      : 'Upload the actual role-specific document. An administrator reviews it before the related features are enabled.';
 
-  return <section className="page-wrap"><PageIntro eyebrow="Account setup" title="Complete your onboarding" description="Upload the actual role-specific document. An administrator reviews it before the related features are enabled."/><div className="onboarding-grid"><div className="onboarding-main"><Panel title={metadata.label} description={`Account status: ${displayState(profile?.status || 'KYC_IN_PROGRESS')}`}><div className="info-callout"><ShieldCheck size={18}/><p>TraceLoop stores evidence privately. An upload is not the same as approval; the backend remains authoritative for account access.</p></div>{error && <Notice kind="error">{error}</Notice>}{submitted && <Notice kind="success">The file was submitted. Your account stays under review until the required approval is complete.</Notice>}<form onSubmit={upload} className="form-stack" encType="multipart/form-data">{metadata.needsSerial && <TextInput label="Device serial number as printed on the invoice" value={serial} onChange={(e) => setSerial(e.target.value)} maxLength={80} required help="The serial is normalized before upload and must match the approved purchase proof used at registration."/>}<div className="file-drop"><UploadCloud size={22}/><strong>{file ? file.name : 'Choose your document'}</strong><p>PDF, JPG, PNG or WebP · maximum 5 MB</p><input key={fileInputKey} type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp" onChange={(e) => { const selected = e.target.files?.[0] || null; setFile(selected); setError(selected && selected.size > MAX_EVIDENCE_BYTES ? 'This file is larger than 5 MB. Choose a smaller PDF or image.' : ''); }} required/></div><div className="form-grid"><TextInput label="Document number (optional)" value={claimedNumber} onChange={(e) => setClaimedNumber(e.target.value)} maxLength={80}/><TextInput label="Issuing authority (optional)" value={issuer} onChange={(e) => setIssuer(e.target.value)} maxLength={120}/><TextInput label="Issue date (optional)" type="date" value={issuedAt} onChange={(e) => setIssuedAt(e.target.value)} /></div><Button type="submit" loading={busy} disabled={!file} className="full-width">Submit evidence for review <ArrowRight size={16}/></Button></form></Panel></div><aside className="onboarding-side"><Panel title="Review steps"><ol className="step-list"><li className="step-complete"><span>1</span><div><strong>Phone verified</strong><small>Your phone is attached to this account.</small></div></li><li className={submitted ? 'step-complete' : 'step-current'}><span>2</span><div><strong>Upload evidence</strong><small>Submit the role-specific document above.</small></div></li><li><span>3</span><div><strong>Admin review</strong><small>An admin checks the actual document.</small></div></li><li><span>4</span><div><strong>Account activation</strong><small>Protected features unlock when approved.</small></div></li></ol></Panel><Panel title="Submitted documents" description="Status refreshed from the backend.">{documents.length ? <div className="document-list">{documents.slice(0, 5).map((doc) => <div className="document-row" key={doc.evidence_id || doc.doc_id}><span className="document-icon"><FileText size={16}/></span><div><strong>{doc.evidence_type || doc.doc_type}</strong><small>{doc.serial_for_device || formatDate(doc.uploaded_at)}</small></div><StateBadge value={doc.verification_status || doc.status}/></div>)}</div> : <p className="muted">No documents submitted yet.</p>}</Panel></aside></div></section>;
+  return <section className="page-wrap"><PageIntro eyebrow="Account setup" title={pageTitle} description={pageDescription} actions={accountStatus === 'ACTIVE' ? <Link className="button button-secondary" to="/dashboard">Back to workspace <ArrowRight size={16}/></Link> : null}/><div className="onboarding-grid"><div className="onboarding-main"><Panel title={metadata.label} description={`Account status: ${displayState(accountStatus)}`}>
+      {accountStatus === 'ACTIVE' && <Notice kind="success">Your account is active. Uploading replacement evidence does not automatically deactivate the account. If the document is revoked/expired or the admin explicitly requires a new review, protected role actions may be paused.</Notice>}
+      {accountStatus === 'REJECTED' && <Notice kind="warning">To retry KYC, submit corrected evidence below. After the upload succeeds, your state returns to KYC_IN_PROGRESS; protected actions remain locked until the required evidence review and account approval complete.</Notice>}
+      {accountStatus === 'KYC_IN_PROGRESS' && <Notice kind="info">Your account is in KYC review. Upload any missing or corrected evidence, then wait for the review decision shown in notifications and here.</Notice>}
+      <div className="info-callout"><ShieldCheck size={18}/><p>TraceLoop stores evidence privately. An upload is not the same as approval; the backend remains authoritative for account access.</p></div>{error && <Notice kind="error">{error}</Notice>}{submitted && <Notice kind="success">{(submittedStatus || accountStatus) === 'KYC_IN_PROGRESS' ? 'Evidence submitted. Your account is in KYC review; wait for the document decision and account approval.' : (submittedStatus || accountStatus) === 'ACTIVE' ? 'Evidence submitted. Your account remains active while the replacement document is reviewed.' : 'Evidence submitted for review.'}</Notice>}<form onSubmit={upload} className="form-stack" encType="multipart/form-data">{metadata.needsSerial && <TextInput label="Device serial number as printed on the invoice" value={serial} onChange={(e) => setSerial(e.target.value)} maxLength={80} required help="The serial is normalized before upload and must match the approved purchase proof used at registration."/>}<div className="file-drop"><UploadCloud size={22}/><strong>{file ? file.name : 'Choose your document'}</strong><p>PDF, JPG, PNG or WebP · maximum 5 MB</p><input key={fileInputKey} type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp" onChange={(e) => { const selected = e.target.files?.[0] || null; setFile(selected); setError(selected && selected.size > MAX_EVIDENCE_BYTES ? 'This file is larger than 5 MB. Choose a smaller PDF or image.' : ''); }} required/></div><div className="form-grid"><TextInput label="Document number (optional)" value={claimedNumber} onChange={(e) => setClaimedNumber(e.target.value)} maxLength={80}/><TextInput label="Issuing authority (optional)" value={issuer} onChange={(e) => setIssuer(e.target.value)} maxLength={120}/><TextInput label="Issue date (optional)" type="date" value={issuedAt} onChange={(e) => setIssuedAt(e.target.value)} /></div><Button type="submit" loading={busy} disabled={!file} className="full-width">Submit evidence for review <ArrowRight size={16}/></Button></form></Panel></div><aside className="onboarding-side"><Panel title="Review steps"><ol className="step-list"><li className="step-complete"><span>1</span><div><strong>Phone verified</strong><small>Your phone is attached to this account.</small></div></li><li className={submitted ? 'step-complete' : 'step-current'}><span>2</span><div><strong>Upload evidence</strong><small>Submit the role-specific document above.</small></div></li><li><span>3</span><div><strong>Admin review</strong><small>An admin checks the actual document.</small></div></li><li><span>4</span><div><strong>Account activation</strong><small>Protected features unlock when approved.</small></div></li></ol></Panel><Panel title="Submitted documents" description="Status refreshed from the backend.">{documents.length ? <div className="document-list">{documents.slice(0, 5).map((doc) => <div className="document-row" key={doc.evidence_id || doc.doc_id}><span className="document-icon"><FileText size={16}/></span><div><strong>{doc.evidence_type || doc.doc_type}</strong><small>{doc.serial_for_device || formatDate(doc.uploaded_at)}</small></div><StateBadge value={doc.verification_status || doc.status}/></div>)}</div> : <p className="muted">No documents submitted yet.</p>}</Panel></aside></div></section>;
 }
 
 function useMyDevices(includeLegacy = false) {
@@ -571,6 +719,7 @@ function VerifierWorkspace() {
   const [rejectBusy, setRejectBusy] = useState(false);
   const [confirm, setConfirm] = useState(null);
   const [busy, setBusy] = useState(false);
+  const actionSubmittingRef = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -648,17 +797,20 @@ function VerifierWorkspace() {
   };
 
   const completeTransfer = async () => {
-    if (!confirm) return;
+    if (!confirm || busy || actionSubmittingRef.current) return;
+    actionSubmittingRef.current = true;
     const row = confirm;
-    setConfirm(null);
     setBusy(true);
     try {
       const data = await apiData(`/transfers/${encodeURIComponent(row.transfer_id)}/complete`, { method: 'POST' });
+      setConfirm(null);
       toast(data.message || 'Transfer completion submitted.');
       await loadTransfers();
     } catch (err) {
+      setConfirm(null);
       toast(err.message, 'error');
     } finally {
+      actionSubmittingRef.current = false;
       setBusy(false);
     }
   };
@@ -689,7 +841,7 @@ function VerifierWorkspace() {
           const requestStatus = String(details.status || request.status || '').toUpperCase();
           return <article className="queue-card" key={request.verification_id}>
             <div className="queue-card-head"><span className="work-row-icon"><ShieldCheck size={20}/></span><div className="work-row-main"><strong>{request.brand || 'Device'} inspection</strong><small className="mono">{request.public_id}</small><small>Shared {formatDate(request.created_at)}</small></div><StateBadge value={requestStatus}/></div>
-            <div className="queue-actions"><Button size="sm" variant="secondary" onClick={() => openDetails(request)}>{expanded === request.verification_id ? 'Hide details' : 'Inspect request'}</Button>{['PENDING', 'IN_PROGRESS'].includes(requestStatus) && <Button size="sm" onClick={() => setConfirm(request)}><ShieldCheck size={15}/> Issue stamp</Button>}<Button size="sm" variant="ghost" onClick={() => { setRejectItem(request); setRejectReason(''); }} disabled={requestStatus !== 'PENDING'}>Reject request</Button></div>
+            <div className="queue-actions"><Button size="sm" variant="secondary" onClick={() => openDetails(request)}>{expanded === request.verification_id ? 'Hide details' : 'Inspect request'}</Button>{['PENDING', 'IN_PROGRESS'].includes(requestStatus) && <Button size="sm" onClick={() => setConfirm(request)} disabled={busy}><ShieldCheck size={15}/> Issue stamp</Button>}<Button size="sm" variant="ghost" onClick={() => { setRejectItem(request); setRejectReason(''); }} disabled={requestStatus !== 'PENDING'}>Reject request</Button></div>
             {expanded === request.verification_id && <div className="request-detail"><div className="detail-grid"><div><small>Passport ID</small><strong className="mono">{request.public_id}</strong></div><div><small>Serial number</small><strong>{details.serial_raw || 'Not available for this request'}</strong></div><div><small>Current configuration</small><strong>{details.current_config ? Object.entries(details.current_config).map(([key, value]) => `${displayState(key)}: ${value}`).join(' · ') : 'Not available'}</strong></div><div><small>Manufacturer comparison</small><strong>{details.manufacturer_match === true ? 'Match recorded' : details.manufacturer_match === false ? 'Differences recorded' : 'No baseline comparison returned'}</strong></div></div>{details.reconciliation_required && <Notice kind="warning">A prior stamping attempt needs reconciliation. Do not blindly retry the on-chain action.</Notice>}<p className="muted compact">Compare the physical laptop against the shared configuration. This screen does not claim a manufacturer baseline unless the backend has one.</p></div>}
           </article>;
         })}</div> : <EmptyState icon={ClipboardCheck} title="No assigned inspection requests" description="A request appears here after the owner completes the passport-sharing step. A public Passport ID alone does not grant inspection access."/>}
@@ -699,12 +851,12 @@ function VerifierWorkspace() {
     <div id="verifier-handoff-queue" className="workflow-stage-anchor">
       <Panel title="Ownership transfers awaiting physical completion" description="Recipients have accepted these transfers. Complete only after the physical device and parties have been checked." actions={<Button size="sm" variant="ghost" icon={RefreshCw} onClick={loadTransfers}>Refresh</Button>}>
         {transferError && <InlineError message={transferError} onRetry={loadTransfers}/>}
-        {transferRows.length ? <div className="list-stack">{transferRows.map((row) => <div className="work-row" key={row.transfer_id}><span className="work-row-icon"><ArrowLeftRight size={19}/></span><div className="work-row-main"><strong>{row.brand_name || 'Device handoff'}</strong><small className="mono">{row.device_id}</small><small>Initiated {formatDate(row.initiated_at)}</small></div><CopyButton value={row.device_id} onCopy={toast}/><Button size="sm" onClick={() => setConfirm({ ...row, isTransferCompletion: true })}>Complete handoff</Button></div>)}</div> : <EmptyState icon={ArrowLeftRight} title="No transfers awaiting completion" description="Accepted ownership handoffs will appear here for physical inspection."/>}
+        {transferRows.length ? <div className="list-stack">{transferRows.map((row) => <div className="work-row" key={row.transfer_id}><span className="work-row-icon"><ArrowLeftRight size={19}/></span><div className="work-row-main"><strong>{row.brand_name || 'Device handoff'}</strong><small className="mono">{row.device_id}</small><small>Initiated {formatDate(row.initiated_at)}</small></div><CopyButton value={row.device_id} onCopy={toast}/><Button size="sm" onClick={() => setConfirm({ ...row, isTransferCompletion: true })} disabled={busy}>Complete handoff</Button></div>)}</div> : <EmptyState icon={ArrowLeftRight} title="No transfers awaiting completion" description="Accepted ownership handoffs will appear here for physical inspection."/>}
       </Panel>
     </div>
 
     <Modal open={!!rejectItem} title="Reject inspection request" description="Use a clear reason so the owner can understand the next step." onClose={() => setRejectItem(null)}><form className="form-stack" onSubmit={reject}><TextArea label="Reason for rejection" value={rejectReason} onChange={(event) => setRejectReason(event.target.value)} required minLength={1} maxLength={500} rows={3} placeholder="e.g. Serial number does not match the device"/><div className="modal-actions"><Button variant="secondary" type="button" onClick={() => setRejectItem(null)}>Cancel</Button><Button variant="danger" type="submit" loading={rejectBusy}>Reject request</Button></div></form></Modal>
-    <ConfirmModal open={!!confirm} title={confirm?.isTransferCompletion ? 'Complete ownership handoff?' : 'Issue verification stamp?'} description={confirm?.isTransferCompletion ? 'This finalizes the accepted transfer through the existing verifier workflow and writes to Algorand. Confirm that the physical handoff has occurred.' : 'This writes a verification action to Algorand. Proceed only after physically inspecting the device and confirming the owner-shared details.'} actionLabel={confirm?.isTransferCompletion ? 'Complete handoff' : 'Issue stamp on-chain'} onCancel={() => setConfirm(null)} onConfirm={confirm?.isTransferCompletion ? completeTransfer : () => stamp(confirm)} busy={busy}/>
+    <ConfirmModal open={!!confirm} title={confirm?.isTransferCompletion ? 'Complete ownership handoff?' : 'Issue verification stamp?'} description={confirm?.isTransferCompletion ? 'This finalizes the accepted transfer through the existing verifier workflow and writes to Algorand. Confirm that the physical handoff has occurred.' : 'This writes a verification action to Algorand. Proceed only after physically inspecting the device and confirming the owner-shared details.'} actionLabel={confirm?.isTransferCompletion ? 'Complete handoff' : 'Issue stamp on-chain'} onCancel={() => { if (!busy) setConfirm(null); }} onConfirm={confirm?.isTransferCompletion ? completeTransfer : () => stamp(confirm)} busy={busy}/>
   </section>;
 }
 
@@ -712,14 +864,35 @@ export function RecyclingPage() {
   const { toast } = useToast();
   const [workflow, setWorkflow] = useState({ incoming_handoffs: [], awaiting_verifier: [], awaiting_receipt: [], ready_for_recycling: [], reconciliation_required: [], counts: {} });
   const [loading, setLoading] = useState(true); const [error, setError] = useState(''); const [confirm, setConfirm] = useState(null); const [busy, setBusy] = useState(false);
+  const actionSubmittingRef = useRef(false);
   const load = useCallback(async () => { setLoading(true); setError(''); try { setWorkflow(await apiData('/recycling/workflow')); } catch (e) { setError(e.message); } finally { setLoading(false); } }, []);
   useEffect(() => { load(); }, [load]);
-  const runAction = async () => { if (!confirm) return; const action = confirm; setConfirm(null); setBusy(true); try { let data; if (action.type === 'accept' || action.type === 'cancel') data = await apiData(`/transfers/${encodeURIComponent(action.row.transfer_id)}/${action.type}`, { method: 'POST' }); else if (action.type === 'receive') data = await apiData('/recycling/receive', { method: 'POST', body: JSON.stringify({ device_id: action.row.device_id }) }); else data = await apiData('/recycling/complete', { method: 'POST', body: JSON.stringify({ device_id: action.row.device_id }) }); toast(data.message || 'Workflow action complete.'); await load(); } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); } };
+  const runAction = async () => {
+    if (!confirm || busy || actionSubmittingRef.current) return;
+    actionSubmittingRef.current = true;
+    const action = confirm;
+    setBusy(true);
+    try {
+      let data;
+      if (action.type === 'accept' || action.type === 'cancel') data = await apiData(`/transfers/${encodeURIComponent(action.row.transfer_id)}/${action.type}`, { method: 'POST' });
+      else if (action.type === 'receive') data = await apiData('/recycling/receive', { method: 'POST', body: JSON.stringify({ device_id: action.row.device_id }) });
+      else data = await apiData('/recycling/complete', { method: 'POST', body: JSON.stringify({ device_id: action.row.device_id }) });
+      setConfirm(null);
+      toast(data.message || 'Workflow action complete.');
+      await load();
+    } catch (e) {
+      setConfirm(null);
+      toast(e.message, 'error');
+    } finally {
+      actionSubmittingRef.current = false;
+      setBusy(false);
+    }
+  };
   const renderRows = (rows, stage) => rows?.length ? <div className="device-grid">{rows.map((row) => <article className="stage-card panel-card" key={row.transfer_id || row.device_id}><div className="device-card-top"><span className="device-brand-mark"><Recycle size={19}/></span><StateBadge value={row.recycling_status || row.status || row.device_status || stage}/><span className="grow"/><CopyButton value={row.device_id} onCopy={toast}/></div><h3>{row.brand_name || 'Device'}</h3><p className="mono device-id">{row.device_id}</p>{row.initiated_at && <p className="muted compact">Handoff {formatDate(row.initiated_at)}</p>}{row.current_config && Object.keys(row.current_config).length > 0 && <div className="spec-list">{Object.entries(row.current_config).slice(0,3).map(([k,v])=><div className="spec-row" key={k}><span>{displayState(k)}</span><strong>{String(v)}</strong></div>)}</div>}
-      {stage === 'incoming' && <div className="card-actions"><Button size="sm" onClick={() => setConfirm({ type: 'accept', row, title: 'Accept recycling handoff?', description: 'Accepting moves the handoff to the service-centre completion stage. The device is not yet owned by your facility.' })}>Accept handoff</Button><Button size="sm" variant="secondary" onClick={() => setConfirm({ type: 'cancel', row, title: 'Cancel this handoff?', description: 'Cancelling ends the pending handoff. The backend will validate that you are an eligible transfer participant.' })}>Cancel</Button></div>}
+      {stage === 'incoming' && <div className="card-actions"><Button size="sm" disabled={busy} onClick={() => setConfirm({ type: 'accept', row, title: 'Accept recycling handoff?', description: 'Accepting moves the handoff to the service-centre completion stage. The device is not yet owned by your facility.' })}>Accept handoff</Button><Button size="sm" variant="secondary" disabled={busy} onClick={() => setConfirm({ type: 'cancel', row, title: 'Cancel this handoff?', description: 'Cancelling ends the pending handoff. The backend will validate that you are an eligible transfer participant.' })}>Cancel</Button></div>}
       {stage === 'awaiting-verifier' && <Notice kind="info">Recipient accepted this handoff. An authorized service centre must physically inspect and complete the ownership transfer before the device can be received into this facility.</Notice>}
-      {stage === 'receipt' && <div className="card-actions"><Button size="sm" onClick={() => setConfirm({ type: 'receive', row, title: 'Acknowledge physical receipt?', description: 'Confirm only after the device has physically arrived at your facility. This records receipt; it does not complete recycling.' })}>Acknowledge receipt</Button></div>}
-      {stage === 'recycle' && <div className="card-actions"><Button size="sm" variant="danger" onClick={() => setConfirm({ type: 'complete', row, title: 'Complete recycling on-chain?', description: 'This is an irreversible ledger action. Confirm that physical recycling was completed under your process. TraceLoop will create a recycling record; it does not issue a government CPCB certificate.' })}><Recycle size={15}/> Complete recycling</Button></div>}
+      {stage === 'receipt' && <div className="card-actions"><Button size="sm" disabled={busy} onClick={() => setConfirm({ type: 'receive', row, title: 'Acknowledge physical receipt?', description: 'Confirm only after the device has physically arrived at your facility. This records receipt; it does not complete recycling.' })}>Acknowledge receipt</Button></div>}
+      {stage === 'recycle' && <div className="card-actions"><Button size="sm" variant="danger" disabled={busy} onClick={() => setConfirm({ type: 'complete', row, title: 'Complete recycling on-chain?', description: 'This is an irreversible ledger action. Confirm that physical recycling was completed under your process. TraceLoop will create a recycling record; it does not issue a government CPCB certificate.' })}><Recycle size={15}/> Complete recycling</Button></div>}
       {stage === 'reconcile' && <Notice kind="warning">A previous ledger attempt needs reconciliation. Do not resubmit automatically.{row.chain_tx_id && <div className="compact mono">Transaction: {row.chain_tx_id}</div>}</Notice>}
     </article>)}</div> : <EmptyState icon={Recycle} title={stage === 'incoming' ? 'No incoming handoffs' : stage === 'receipt' ? 'No devices awaiting receipt' : stage === 'recycle' ? 'No devices ready for recycling' : 'No cases need reconciliation'} description={stage === 'incoming' ? 'New handoffs to this facility appear here.' : stage === 'receipt' ? 'Accepted and physically completed transfers will appear here.' : stage === 'recycle' ? 'Acknowledge physical receipt before completing recycling.' : 'Any uncertain ledger attempt will be shown for manual recovery.'}/>;
   const recyclerStep = error
@@ -739,7 +912,7 @@ export function RecyclingPage() {
     {!loading && <WorkflowNextStep tone={recyclerStep.tone} icon={Recycle} current={recyclerStep.current} next={recyclerStep.next} detail={recyclerStep.detail} recovery={recyclerStep.recovery}/>}
     <div className="stat-grid modern-stats"><StatCard icon={ArrowDownLeft} label="Incoming" value={workflow.counts?.incoming_handoffs ?? '—'} detail="Awaiting recipient response"/><StatCard icon={ShieldCheck} label="Awaiting verifier" value={workflow.counts?.awaiting_verifier ?? '—'} detail="Accepted; physical handoff pending" tone="blue"/><StatCard icon={PackageCheck} label="Awaiting receipt" value={workflow.counts?.awaiting_receipt ?? '—'} detail="Transferred to your facility" tone="blue"/><StatCard icon={Recycle} label="Ready to complete" value={workflow.counts?.ready_for_recycling ?? '—'} detail="Receipt acknowledged" tone="amber"/><StatCard icon={CircleAlert} label="Reconciliation" value={workflow.counts?.reconciliation_required ?? '—'} detail="No automatic retry permitted" tone="red"/></div>
     {loading ? <div className="skeleton-stack"><div className="skeleton-row"/><div className="skeleton-row"/><div className="skeleton-row"/></div> : <div className="pipeline-stack"><Panel title="1 · Incoming handoffs" description="Accepting moves the transfer to physical inspection. The verifier must complete ownership transfer before the device appears in your receipt queue.">{renderRows(workflow.incoming_handoffs, 'incoming')}</Panel><Panel title="Accepted · awaiting service-centre completion" description="Acceptance alone does not change ownership. This stage remains visible until an authorized verifier completes the physical handoff.">{renderRows(workflow.awaiting_verifier, 'awaiting-verifier')}</Panel><Panel title="2 · Awaiting facility receipt" description="Acknowledge only after physically receiving the device at this facility.">{renderRows(workflow.awaiting_receipt, 'receipt')}</Panel><Panel title="3 · Ready for recycling completion" description="The irreversible on-chain recycling transition is available only after physical receipt is recorded.">{renderRows(workflow.ready_for_recycling, 'recycle')}</Panel>{workflow.reconciliation_required?.length > 0 && <Panel title="Requires reconciliation" description="Do not retry these chain actions automatically.">{renderRows(workflow.reconciliation_required, 'reconcile')}</Panel>}</div>}
-    <ConfirmModal open={!!confirm} title={confirm?.title || 'Confirm action'} description={confirm?.description} actionLabel={confirm?.type === 'complete' ? 'Complete recycling on-chain' : confirm?.type === 'receive' ? 'Confirm receipt' : confirm?.type === 'accept' ? 'Accept handoff' : 'Cancel handoff'} danger={confirm?.type === 'complete' || confirm?.type === 'cancel'} onCancel={() => setConfirm(null)} onConfirm={runAction} busy={busy}/>
+    <ConfirmModal open={!!confirm} title={confirm?.title || 'Confirm action'} description={confirm?.description} actionLabel={confirm?.type === 'complete' ? 'Complete recycling on-chain' : confirm?.type === 'receive' ? 'Confirm receipt' : confirm?.type === 'accept' ? 'Accept handoff' : 'Cancel handoff'} danger={confirm?.type === 'complete' || confirm?.type === 'cancel'} onCancel={() => { if (!busy) setConfirm(null); }} onConfirm={runAction} busy={busy}/>
   </section>;
 }
 
@@ -1015,6 +1188,7 @@ export function TrackPage() {
 
     {device && <div className="track-results">
       <Panel className="passport-overview-panel" title={device.brand_name || device.brand || 'Device passport'} description={`Public Passport ID · ${publicId}`} actions={<CopyButton value={publicId} onCopy={toast} />}>
+        {device.climate_circularity_impact && <section className="reconciliation-detail-section climate-impact-panel"><div className="reconciliation-section-heading"><div><h3>Climate &amp; Circularity Impact</h3><p>Accountable, device-specific lifecycle records. No unverified carbon-savings claims.</p></div><Badge>{device.climate_circularity_impact.methodology_status === 'SOURCE_UNAVAILABLE' ? 'Source unavailable' : 'Observed records'}</Badge></div><div className="stat-grid modern-stats"><StatCard icon={Repeat2} label="Completed transfers" value={device.climate_circularity_impact.completed_transfer_count ?? 'Unavailable'} detail="Recorded completed ownership transitions"/><StatCard icon={Recycle} label="TraceLoop-recorded recycling completion" value={device.climate_circularity_impact.confirmed_recycling_completion === true ? 'Recorded' : device.climate_circularity_impact.confirmed_recycling_completion === false ? 'Not recorded' : 'Unavailable'} detail="Requires RECYCLED status and completion timestamp"/><StatCard icon={Leaf} label="CO₂e avoided" value="Not calculated" detail="No validated counterfactual lifecycle model yet"/><StatCard icon={Scale} label="E-waste mass" value="Not measured" detail="No device-specific mass measurement stored"/></div><p className="muted compact">{device.climate_circularity_impact.note}</p></section>}
         <div className="passport-state-strip">
           <div><span className="eyebrow">Current lifecycle state</span><StateBadge value={device.status || 'UNKNOWN'}/></div>
           <div><span className="eyebrow">Ledger registration</span><StateBadge value={device.registration_status || device.chain_status || 'UNKNOWN'}/></div>
@@ -1057,23 +1231,104 @@ export function NetworkPage() {
   return <section className="page-wrap"><PageIntro eyebrow="TraceLoop network" title="A physical-first lifecycle network" description="TraceLoop coordinates device owners, buyers, authorized service centres, and recycling facilities through explicit handoffs and auditable lifecycle records."/><div className="value-grid network-grid"><article className="value-card"><span className="value-icon"><Users size={21}/></span><h3>Owners and buyers</h3><p>Register and transfer confirmed V2 passports. Participants exchange account IDs in person; private user information is not listed publicly.</p></article><article className="value-card"><span className="value-icon"><ShieldCheck size={21}/></span><h3>Authorized service centres</h3><p>Owners share a specific passport with a verifier. Physical inspection and backend authorization precede a verification stamp.</p></article><article className="value-card"><span className="value-icon"><Recycle size={21}/></span><h3>Recycling facilities</h3><p>Accept an ownership handoff, acknowledge physical receipt, and record the recycling state only after the required checks.</p></article></div><Panel title="How participants connect" description="TraceLoop does not expose a public directory of user accounts. Identifiers are exchanged directly at a physical handoff or service counter."><div className="network-steps"><div><span>01</span><strong>Meet in person</strong><p>Exchange the relevant TraceLoop user ID or passport ID.</p></div><div><span>02</span><strong>Share a record</strong><p>The owner creates an explicit verification request or transfer.</p></div><div><span>03</span><strong>Perform the real-world check</strong><p>Authorized participants inspect the device and use the corresponding workflow.</p></div><div><span>04</span><strong>Audit the lifecycle</strong><p>Track the public passport and available source reconciliation.</p></div></div><div className="panel-actions bottom-actions"><Link className="button button-primary" to="/track">Track a passport <ArrowRight size={16}/></Link><Link className="button button-secondary" to="/register">Join TraceLoop</Link></div></Panel></section>;
 }
 
+function LifecycleAnomalyPanel() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [brief, setBrief] = useState(null);
+  const [briefLoading, setBriefLoading] = useState(false);
+
+  const loadFindings = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    setBrief(null);
+    try {
+      const result = await apiData('/admin/lifecycle-anomalies?limit=60');
+      setData(result);
+    } catch (err) {
+      setError(err.message || 'Lifecycle review signals could not be loaded.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadFindings(); }, [loadFindings]);
+
+  const generateBrief = async () => {
+    if (briefLoading) return;
+    setBriefLoading(true);
+    setError('');
+    try {
+      const result = await apiData('/admin/lifecycle-anomalies/explain?limit=60', { method: 'POST' });
+      setBrief(result);
+    } catch (err) {
+      setError(err.message || 'The lifecycle review brief could not be generated.');
+    } finally {
+      setBriefLoading(false);
+    }
+  };
+
+  const findings = Array.isArray(data?.findings) ? data.findings : [];
+  const actionCount = findings.filter((item) => item.priority === 'ACTION').length;
+  const reviewCount = findings.filter((item) => item.priority === 'REVIEW').length;
+
+  return <Panel
+    title="Lifecycle Anomaly Triage"
+    description="Read-only review signals from confirmed V2 lifecycle records. Rules select the records; AI can explain them but cannot decide fraud or change device state."
+    actions={<Button size="sm" variant="secondary" icon={RefreshCw} onClick={loadFindings} loading={loading}>Refresh signals</Button>}
+  >
+    <div className="lifecycle-anomaly-intro">
+      <div><strong>{loading ? '…' : findings.length}</strong><span>signals shown</span></div>
+      <div><strong>{loading ? '…' : actionCount}</strong><span>reconciliation / action</span></div>
+      <div><strong>{loading ? '…' : reviewCount}</strong><span>pattern review</span></div>
+      <p>These are investigation leads, not conclusions about misconduct or physical device condition. Legacy V1 passports are excluded from lifecycle pattern rules.</p>
+    </div>
+    <div className="lifecycle-anomaly-toolbar">
+      <Button size="sm" onClick={generateBrief} loading={briefLoading} disabled={loading || briefLoading}>
+        <Activity size={15}/>{briefLoading ? 'Preparing brief…' : 'Generate AI review brief'}
+      </Button>
+      <span className="muted">AI is optional; deterministic findings remain available if Gemini is not configured.</span>
+    </div>
+    {error && <Notice kind="error">{error}<div><button type="button" className="text-button" onClick={loadFindings}>Reload review signals</button></div></Notice>}
+    {brief && <section className="lifecycle-ai-brief" aria-live="polite">
+      <div className="lifecycle-ai-brief-heading"><div><h3>{brief.generated ? 'AI-assisted review brief' : 'Rule-based review summary'}</h3><p>{brief.generated ? `Generated with ${brief.model || 'Gemini'} · Advisory only` : 'Gemini unavailable or not configured; deterministic fallback shown'}</p></div><Badge>{brief.generated ? 'AI explanation' : 'Fallback'}</Badge></div>
+      <p>{brief.summary}</p>
+      {Array.isArray(brief.recommended_checks) && brief.recommended_checks.length > 0 && <div><strong>Suggested checks</strong><ul>{brief.recommended_checks.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}</ul></div>}
+      <small>{brief.disclaimer || 'Explanatory guidance only. Confirm source records before action.'}{brief.fallback_reason && !brief.generated ? ` (${brief.fallback_reason})` : ''}</small>
+    </section>}
+    {loading && !data ? <div className="skeleton-stack"><div className="skeleton-row"/><div className="skeleton-row"/><div className="skeleton-row"/></div>
+      : findings.length ? <div className="lifecycle-anomaly-list">{findings.map((finding) => <article className="lifecycle-anomaly-card" key={finding.finding_id}>
+        <div className="lifecycle-anomaly-card-head"><div><span className="eyebrow">{displayState(finding.category)}</span><h3>{finding.title}</h3></div><Badge tone={finding.priority === 'ACTION' ? 'amber' : 'neutral'}>{finding.priority === 'ACTION' ? 'Reconcile' : 'Review'}</Badge></div>
+        <p>{finding.summary}</p>
+        <div className="lifecycle-anomaly-evidence"><span><strong>Passport</strong> {finding.public_device_id || 'Registration not confirmed'}</span><span><strong>Source</strong> {displayState(finding.source_type)} · {String(finding.source_id || '').slice(0, 12) || '—'}</span><span><strong>Observed</strong> {formatDate(finding.observed_at)}</span></div>
+        <div className="lifecycle-anomaly-next"><strong>Suggested review</strong><p>{finding.review_check}</p></div>
+        {finding.public_device_id && <div className="lifecycle-anomaly-actions"><Link to={`/track?id=${encodeURIComponent(finding.public_device_id)}`}>Open Passport <ArrowRight size={14}/></Link></div>}
+      </article>)}</div>
+      : !loading && !error ? <EmptyState icon={ShieldCheck} title="No configured review signals" description="No records matched the current deterministic review rules. This does not prove that every lifecycle record is correct."/> : null}
+    {data?.truncated && <p className="muted compact">Showing {data.returned_count} of {data.findings_count} signals. Refresh after resolving the oldest items to review the remainder.</p>}
+    {data?.methodology_note && <p className="muted compact">{data.methodology_note}</p>}
+  </Panel>;
+}
+
 export function AdminPage() {
   const { toast } = useToast();
-  const [approvals, setApprovals] = useState([]); const [documents, setDocuments] = useState([]); const [disputes, setDisputes] = useState([]); const [devices, setDevices] = useState([]); const [verifiers, setVerifiers] = useState([]);
-  const [loading, setLoading] = useState(true); const [error, setError] = useState(''); const [showLegacy, setShowLegacy] = useState(false);
+  const [approvals, setApprovals] = useState([]); const [documents, setDocuments] = useState([]); const [disputes, setDisputes] = useState([]); const [devices, setDevices] = useState([]); const [verifiers, setVerifiers] = useState([]); const [roleAccounts, setRoleAccounts] = useState([]);
+  const [loading, setLoading] = useState(true); const [error, setError] = useState(''); const [showLegacy, setShowLegacy] = useState(true); const [analytics, setAnalytics] = useState(null);
   const [viewed, setViewed] = useState({}); const [modal, setModal] = useState(null); const [busy, setBusy] = useState(false); const [notes, setNotes] = useState(''); const [reason, setReason] = useState(''); const [targetState, setTargetState] = useState('REGISTERED');
   const load = useCallback(async () => {
     setLoading(true); setError('');
     const outcomes = await Promise.allSettled([
-      apiData('/admin/approvals/pending'), apiData('/admin/kyc/pending'), apiData('/disputes/open'), apiData('/admin/devices'), apiData('/admin/verifiers'),
+      apiData('/admin/approvals/pending'), apiData('/admin/kyc/pending'), apiData('/disputes/open'), apiData('/admin/devices'), apiData('/admin/verifiers'), apiData('/analytics/overview'), apiData('/admin/role-accounts/active'),
     ]);
-    const labels = ['account approvals', 'evidence queue', 'disputes', 'device registry', 'authorized service centres'];
+    const labels = ['account approvals', 'evidence queue', 'disputes', 'device registry', 'authorized service centres', 'system analytics', 'active role accounts'];
     const failed = outcomes.map((result, idx) => result.status === 'rejected' ? `${labels[idx]}: ${result.reason.message}` : null).filter(Boolean);
     if (outcomes[0].status === 'fulfilled') setApprovals(outcomes[0].value.pending_accounts || []);
     if (outcomes[1].status === 'fulfilled') setDocuments(outcomes[1].value.pending_documents || []);
     if (outcomes[2].status === 'fulfilled') setDisputes(outcomes[2].value.disputes || []);
     if (outcomes[3].status === 'fulfilled') setDevices(outcomes[3].value.devices || []);
     if (outcomes[4].status === 'fulfilled') setVerifiers(outcomes[4].value.verifiers || []);
+    if (outcomes[5].status === 'fulfilled') setAnalytics(outcomes[5].value);
+    if (outcomes[6].status === 'fulfilled') setRoleAccounts(outcomes[6].value.accounts || []);
     setError(failed.join(' · ')); setLoading(false);
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -1085,17 +1340,30 @@ export function AdminPage() {
   const resolveDispute = async (event) => { event.preventDefault(); if (!modal?.item) return; setBusy(true); try { const data = await apiData(`/disputes/${encodeURIComponent(modal.item.dispute_id)}/resolve`, { method: 'PATCH', body: JSON.stringify({ resolved_state: targetState, resolution_note: notes.trim() }) }); toast(data.message || 'Dispute resolution submitted on-chain.'); setModal(null); setNotes(''); await load(); } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); } };
   const exportDevice = async (event) => { event.preventDefault(); if (!modal?.item) return; setBusy(true); try { const data = await apiData(`/admin/devices/${encodeURIComponent(modal.item.public_id || modal.item.device_id)}/export`, { method: 'POST', body: JSON.stringify({ notes: notes.trim() || 'Exported by administrator.' }) }); toast(data.message || 'Device export recorded on-chain.'); setModal(null); setNotes(''); await load(); } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); } };
   const revokeVerifier = async () => { if (!modal?.item) return; setBusy(true); try { const data = await apiData(`/admin/verifiers/${encodeURIComponent(modal.item.user_id)}/revoke`, { method: 'POST' }); toast(data.message || 'Service-centre authorization revoked.'); setModal(null); await load(); } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); } };
+  const requireRoleAccountKyc = async (event) => { event.preventDefault(); if (!modal?.item) return; if (notes.trim().length < 10) { toast('Add a clear reason of at least 10 characters for the audit trail.', 'error'); return; } setBusy(true); try { const data = await apiData(`/admin/role-accounts/${encodeURIComponent(modal.item.user_id)}/require-kyc`, { method: 'POST', body: JSON.stringify({ notes: notes.trim() }) }); toast(data.message || 'Account returned to KYC review.'); setModal(null); setNotes(''); await load(); } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); } };
   const reviewableDisputes = disputes.filter((d) => !d.is_legacy_test && !d.read_only);
   const visibleDevices = devices.filter((d) => showLegacy || (!d.is_legacy_test && d.identity_version !== 'V1_LEGACY'));
-  return <section className="page-wrap"><PageIntro eyebrow="TraceLoop administration" title="Operations console" description="Review account activation and evidence, supervise on-chain dispute actions, and inspect the registry." actions={<Button variant="secondary" icon={RefreshCw} onClick={load}>Refresh all queues</Button>}/>{error && <Notice kind="warning">Some queues could not be refreshed: {error}</Notice>}
-    <div className="stat-grid modern-stats"><StatCard icon={Users} label="Account approvals" value={approvals.length} detail="Service centres and recyclers"/><StatCard icon={FileCheck2} label="Evidence awaiting review" value={documents.length} detail="Open actual files before accepting" tone="blue"/><StatCard icon={ShieldCheck} label="Active verifiers" value={verifiers.length} detail="Authorized service centres" tone="green"/><StatCard icon={Laptop} label="Confirmed V2 devices" value={devices.filter((d) => !d.is_legacy_test && d.registration_status === 'CONFIRMED').length} detail="V1 legacy rows hidden by default" tone="amber"/></div>
+  const activeVerifiers = verifiers.length;
+  const credentialIssueVerifiers = verifiers.filter((v) => !v.credential_record_valid).length;
+  const summary = analytics?.summary || {};
+  const transferStats = analytics?.transfer_statistics || {};
+  const disputeStats = analytics?.dispute_statistics || {};
+  const recyclingStats = analytics?.recycling_activity || {};
+  const hardwareStats = analytics?.hardware_activity || {};
+  const lifecycle = analytics?.lifecycle_distribution || {};
+  const participants = analytics?.network_participants || {};
+  const chainEvents = analytics?.on_chain_events || {};
+  return <section className="page-wrap"><PageIntro eyebrow="TraceLoop administration" title="Operations console" description="Review account activation and evidence, supervise on-chain dispute actions, inspect both V1 legacy and V2 device records, and monitor system activity." actions={<Button variant="secondary" icon={RefreshCw} onClick={load}>Refresh all queues</Button>}/>{error && <Notice kind="warning">Some queues could not be refreshed: {error}</Notice>}
+    <div className="stat-grid modern-stats"><StatCard icon={Users} label="Account approvals" value={approvals.length} detail="Service centres and recyclers"/><StatCard icon={FileCheck2} label="Evidence awaiting review" value={documents.length} detail="Open actual files before accepting" tone="blue"/><StatCard icon={ShieldCheck} label="Active verifiers" value={activeVerifiers} detail={credentialIssueVerifiers ? `${credentialIssueVerifiers} active account(s) have credential-record issues; status was not changed by this dashboard` : 'Counts ACTIVE accounts; protected actions recheck evidence integrity'} tone={credentialIssueVerifiers ? 'amber' : 'green'}/><StatCard icon={Laptop} label="Confirmed V2 devices" value={devices.filter((d) => !d.is_legacy_test && d.registration_status === 'CONFIRMED').length} detail={`${summary.legacy_test_records ?? devices.filter((d) => d.is_legacy_test).length} legacy/archive records listed below`} tone="amber"/></div>
+    <LifecycleAnomalyPanel />
+    {analytics && <Panel title="System analytics" description={`${summary.network || 'Ledger network'} · App ID ${summary.algorand_app_id || '—'} · Legacy rows are separated from operational V2 counts.`}>{analytics.climate_circularity_impact && <section className="reconciliation-detail-section climate-impact-panel"><div className="reconciliation-section-heading"><div><h3>Climate &amp; Circularity Impact</h3><p>Observed system-wide events only; no generic per-device weight or carbon multiplier is applied.</p></div><Badge>Counts only</Badge></div><div className="stat-grid modern-stats"><StatCard icon={Repeat2} label="Completed transfers" value={analytics.climate_circularity_impact.completed_transfer_count ?? 'Unavailable'} detail="Completed lifecycle transitions"/><StatCard icon={Recycle} label="Confirmed recycling completions" value={analytics.climate_circularity_impact.confirmed_recycling_completion_count ?? 'Unavailable'} detail="RECYCLED plus completion timestamp"/><StatCard icon={Leaf} label="CO₂e avoided" value="Not calculated" detail="Requires a validated counterfactual lifecycle method"/><StatCard icon={Scale} label="E-waste mass" value="Not measured" detail="Requires recorded device/recycler weight"/></div><p className="muted compact">{(analytics.climate_circularity_impact.notes || []).join(' ')}</p></section>}<div className="stat-grid modern-stats analytics-stats"><StatCard icon={Activity} label="Active V2 devices" value={summary.active_devices ?? '—'} detail={`${summary.total_devices_registered ?? 0} confirmed V2 passports`} tone="green"/><StatCard icon={CircleAlert} label="Needs reconciliation" value={summary.reconciliation_required ?? '—'} detail={`${summary.pending_registrations ?? 0} pending · ${summary.failed_registrations ?? 0} failed registrations`} tone="amber"/><StatCard icon={Recycle} label="Recycled in last 30 days" value={recyclingStats.recycled_last_30_days ?? '—'} detail={`${recyclingStats.formal_recycling_rate_percent ?? 0}% of confirmed V2 devices`} tone="blue"/><StatCard icon={Activity} label="On-chain events" value={summary.total_on_chain_events ?? '—'} detail={`${summary.legacy_history_events ?? 0} legacy history events`} /></div><div className="analytics-detail-grid"><div><h4>Lifecycle distribution</h4><div className="analytics-value-list">{Object.entries(lifecycle).map(([key, value]) => <div key={key}><span>{displayState(key)}</span><strong>{value}</strong></div>)}</div></div><div><h4>Transfers & disputes</h4><div className="analytics-value-list"><div><span>Total / completed transfers</span><strong>{transferStats.total_transfers ?? 0} / {transferStats.completed_transfers ?? 0}</strong></div><div><span>Transfers flagged</span><strong>{(transferStats.velocity_flagged_transfers ?? 0) + (transferStats.device_count_flagged_transfers ?? 0)}</strong></div><div><span>Disputes under review</span><strong>{disputeStats.under_review ?? 0}</strong></div><div><span>Frozen / resolved disputes</span><strong>{disputeStats.frozen_on_chain ?? 0} / {disputeStats.resolved ?? 0}</strong></div></div></div><div><h4>Network & hardware</h4><div className="analytics-value-list"><div><span>Authorized verifiers (all statuses)</span><strong>{participants.authorized_verifiers ?? 0}</strong></div><div><span>Recyclers</span><strong>{participants.cpcb_recyclers ?? 0}</strong></div><div><span>Hardware changes recorded</span><strong>{hardwareStats.total_hardware_changes_declared ?? 0}</strong></div><div><span>Active marketplace listings</span><strong>{analytics.marketplace?.verified_listings_active ?? 0}</strong></div></div></div><div><h4>Recorded event types</h4><div className="analytics-value-list">{Object.entries(chainEvents).length ? Object.entries(chainEvents).map(([key, value]) => <div key={key}><span>{displayState(key)}</span><strong>{value}</strong></div>) : <p className="muted">No mirrored V2 events recorded yet.</p>}</div></div></div></Panel>}
     {loading && <div className="skeleton-stack"><div className="skeleton-row"/><div className="skeleton-row"/><div className="skeleton-card"/></div>}
     <div className="admin-sections">
       <Panel title="Account activation" description="Only verified service-centre/recycler credentials can pass the separate activation step.">{approvals.length ? <div className="list-stack">{approvals.map((item) => <div className="work-row" key={item.user_id}><span className="work-row-icon"><Users size={18}/></span><div className="work-row-main"><strong>{item.name}</strong><small>{displayState(item.role)} · {item.phone}</small><small>Credential: {displayState(item.credential_status)} · {displayState(item.activation_stage)}</small><small className="mono">{item.user_id}</small></div><StateBadge value={item.user_status}/><div className="row-actions"><Button size="sm" onClick={() => { setNotes(''); setModal({ type: 'approve-account', item }); }} disabled={!item.can_activate}>Approve</Button><Button size="sm" variant="secondary" onClick={() => { setReason(''); setModal({ type: 'reject-account', item }); }}>Reject</Button></div></div>)}</div> : !loading && <EmptyState icon={CheckCircle2} title="No pending account approvals" description="Service-centre and recycler activation requests will appear here after their credential has been verified."/>}</Panel>
       <Panel title="Evidence review" description="Open each protected file before approving. The backend records the view action and requires an explicit inspection attestation.">{documents.length ? <div className="list-stack">{documents.map((item) => <div className="work-row work-row-tall" key={item.evidence_id || item.doc_id}><span className="work-row-icon"><FileText size={18}/></span><div className="work-row-main"><strong>{item.user_name || 'Account evidence'}</strong><small>{displayState(item.doc_type)} · {displayState(item.user_role)}</small><small>{item.serial_for_device ? `Serial claim: ${item.serial_for_device}` : item.claimed_document_number || item.original_filename || 'Document metadata unavailable'}</small><small>{formatDate(item.uploaded_at)} · {displayState(item.status)}</small></div><StateBadge value={item.status}/><div className="row-actions"><Button size="sm" variant="secondary" onClick={() => openEvidence(item)} disabled={!item.evidence_id || !item.has_stored_file}>{viewed[item.evidence_id] ? 'Opened' : 'Review file'}</Button><Button size="sm" onClick={() => { setReason(''); setNotes(''); setModal({ type: 'review-evidence', item }); }} disabled={!item.evidence_id || !item.can_approve}>Decide</Button></div></div>)}</div> : !loading && <EmptyState icon={FileCheck2} title="Evidence queue is clear" description="New uploaded documents will appear here for protected review."/>}</Panel>
       <Panel title="Dispute review" description="UNDER REVIEW means reported but not frozen. Freezing writes to Algorand. OPEN disputes can be resolved to an allowed state, after which the device needs re-verification.">{reviewableDisputes.length ? <div className="list-stack">{reviewableDisputes.map((item) => <div className="work-row work-row-tall" key={item.dispute_id}><span className="work-row-icon"><ShieldCheck size={18}/></span><div className="work-row-main"><strong>{item.brand_name || 'Device issue'} · {displayState(item.dispute_type)}</strong><small className="mono">{item.device_id}</small><p>{item.description}</p><small>Reported by {displayState(item.raised_by_role)} · {formatDate(item.created_at)}</small></div><StateBadge value={item.status}/><div className="row-actions">{item.status === 'UNDER_REVIEW' && <Button size="sm" variant="danger" onClick={() => setModal({ type: 'freeze-dispute', item })}>Freeze on-chain</Button>}{item.status === 'OPEN' && <Button size="sm" onClick={() => { setNotes(''); setTargetState('REGISTERED'); setModal({ type: 'resolve-dispute', item }); }}>Resolve</Button>}</div></div>)}</div> : !loading && <EmptyState icon={ShieldCheck} title="No active V2 disputes" description="Disputes awaiting review or resolution will appear here."/>}</Panel>
-      <Panel title="Device registry" description="V1 historical test records are hidden by default. Export is an irreversible on-chain action."><div className="legacy-toggle"><label className="check-label"><input type="checkbox" checked={showLegacy} onChange={(e) => setShowLegacy(e.target.checked)}/> Show V1 legacy test records</label></div>{visibleDevices.length ? <div className="list-stack">{visibleDevices.map((item) => <div className="work-row" key={item.public_id || item.device_id}><span className="work-row-icon"><Laptop size={18}/></span><div className="work-row-main"><strong>{item.brand || 'Device'}</strong><small className="mono">{item.public_id || item.device_id}</small><small>{displayState(item.identity_version)} · {displayState(item.registration_status)}</small></div><StateBadge value={item.status}/>{!item.read_only && !['RECYCLED','EXPORTED'].includes(String(item.status).toUpperCase()) && <Button size="sm" variant="danger" onClick={() => { setNotes(''); setModal({ type: 'export-device', item }); }}>Export</Button>}</div>)}</div> : !loading && <EmptyState icon={Laptop} title="No devices to show" description="Device records will appear here as registrations are created."/>}</Panel>
-      <Panel title="Authorized service centres" description="Admin-only view. These details are not exposed as a public directory or returned to device owners.">{verifiers.length ? <div className="list-stack">{verifiers.map((v) => <div className="work-row" key={v.user_id}><span className="work-row-icon"><ShieldCheck size={18}/></span><div className="work-row-main"><strong>{v.name}</strong><small>{v.phone} · Centre {v.service_center_id || '—'}</small><small className="mono">{v.user_id}</small></div><StateBadge value={v.status}/><Button size="sm" variant="danger" onClick={() => setModal({ type: 'revoke-verifier', item: v })}>Revoke</Button></div>)}</div> : !loading && <EmptyState icon={ShieldCheck} title="No currently eligible verifiers" description="Only active, eligible service-centre accounts are listed here."/>}</Panel>
+      <Panel title="Device registry" description="V1 legacy passports remain visible as read-only history. Only eligible V2 records expose lifecycle actions. Export is irreversible."><div className="legacy-toggle"><label className="check-label"><input type="checkbox" checked={showLegacy} onChange={(e) => setShowLegacy(e.target.checked)}/> Include V1 legacy / archive records</label></div>{visibleDevices.length ? <div className="list-stack">{visibleDevices.map((item) => <div className="work-row" key={item.legacy_chain_id || item.public_id || item.device_id}><span className="work-row-icon"><Laptop size={18}/></span><div className="work-row-main"><strong>{item.brand || 'Device'}</strong><small className="mono">{item.is_legacy_test ? (item.legacy_chain_id ? `Original V1 chain ID: ${item.legacy_chain_id}` : 'Original V1 chain ID unavailable') : (item.public_id || item.device_id)}</small><small>{displayState(item.identity_version)} · {displayState(item.registration_status)}</small>{item.is_legacy_test && <small>Legacy chain state: {displayState(item.legacy_chain_state?.state_label || 'UNKNOWN')}{item.legacy_chain_state?.stamp_valid === true ? ' · Stamp valid' : item.legacy_chain_state?.stamp_valid === false ? ' · Stamp invalid' : ''}</small>}</div><StateBadge value={item.is_legacy_test ? (item.legacy_chain_state?.state_label || 'LEGACY_READ_ONLY') : item.status}/>{item.is_legacy_test && item.legacy_chain_id && <CopyButton value={String(item.legacy_chain_id)} onCopy={toast}/>}{!item.read_only && !['RECYCLED','EXPORTED'].includes(String(item.status).toUpperCase()) && <Button size="sm" variant="danger" onClick={() => { setNotes(''); setModal({ type: 'export-device', item }); }}>Export</Button>}</div>)}</div> : !loading && <EmptyState icon={Laptop} title="No devices to show" description="Device records will appear here as registrations are created."/>}</Panel>
+      <Panel title="Active role accounts" description="Verifier and recycler account status is separate from credential eligibility. Refreshing this list never changes an account. Require KYC only for a genuine security or credential-review reason.">{roleAccounts.length ? <div className="list-stack">{roleAccounts.map((v) => <div className="work-row" key={v.user_id}><span className="work-row-icon">{v.role === 'RECYCLER' ? <Recycle size={18}/> : <ShieldCheck size={18}/>}</span><div className="work-row-main"><strong>{v.name} · {displayState(v.role)}</strong><small>{v.phone} · {v.role === 'RECYCLER' ? `CPCB ${v.cpcb_number || '—'}` : `Centre ${v.service_center_id || '—'}`}</small><small className="mono">{v.user_id}</small><small>Credential record: {displayState(v.credential_status)} · Evidence file: {displayState(v.stored_evidence_status || 'NOT_CHECKED')} · {v.credential_state === 'REUPLOAD_REQUIRED' ? 'Replacement evidence and admin re-review required.' : v.credential_state === 'STORAGE_CHECK_UNAVAILABLE' ? 'Storage could not confirm file presence; this does not revoke approval.' : v.credential_record_valid && v.stored_evidence_status === 'PRESENT' ? 'File exists; hash/size and authorization are rechecked before every protected action.' : (v.credential_issue || 'Credential record needs review.')}</small></div><StateBadge value={v.status}/><Button size="sm" variant="secondary" onClick={() => { setNotes(''); setModal({ type: 'require-kyc', item: v }); }}>Require KYC</Button>{v.role === 'VERIFIABLE' && <Button size="sm" variant="danger" onClick={() => setModal({ type: 'revoke-verifier', item: v })}>Suspend</Button>}</div>)}</div> : !loading && <EmptyState icon={ShieldCheck} title="No active verifier or recycler accounts" description="Active accounts appear here with read-only credential diagnostics."/>}</Panel>
     </div>
     <Modal open={modal?.type === 'approve-account'} title="Approve account" description={`Approve and activate ${modal?.item?.name || 'this account'}?`} onClose={() => !busy && setModal(null)}><p className="muted">The backend has confirmed eligible role evidence. Approval activates this service-centre or recycler account.</p><TextArea label="Admin note (optional)" value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} maxLength={3000}/><div className="modal-actions"><Button variant="secondary" onClick={() => setModal(null)} disabled={busy}>Cancel</Button><Button onClick={() => approveAccount(modal.item)} loading={busy}>Approve account</Button></div></Modal>
     <Modal open={modal?.type === 'reject-account'} title="Reject account activation" description={`Reject ${modal?.item?.name || 'this account'}? Provide a reason for the audit trail.`} onClose={() => !busy && setModal(null)}><form className="form-stack" onSubmit={rejectAccount}><TextArea label="Reason / admin notes" value={reason} onChange={(e) => setReason(e.target.value)} required minLength={3} maxLength={3000} rows={3}/><div className="modal-actions"><Button variant="secondary" type="button" onClick={() => setModal(null)} disabled={busy}>Cancel</Button><Button variant="danger" type="submit" loading={busy}>Reject account</Button></div></form></Modal>
@@ -1103,7 +1371,8 @@ export function AdminPage() {
     <Modal open={modal?.type === 'freeze-dispute'} title="Freeze device on-chain" description="This writes an irreversible dispute/freeze action to Algorand TestNet. Confirm the report and V2 device before continuing." onClose={() => !busy && setModal(null)}><div className="current-spec"><small>Device</small><strong>{modal?.item?.brand_name} · {modal?.item?.device_id}</strong><small>{modal?.item?.description}</small></div><div className="modal-actions"><Button variant="secondary" onClick={() => setModal(null)} disabled={busy}>Cancel</Button><Button variant="danger" onClick={() => freezeDispute(modal.item)} loading={busy}>Freeze on-chain</Button></div></Modal>
     <Modal open={modal?.type === 'resolve-dispute'} title="Resolve dispute" description="Choose the allowed state that matches the reviewed outcome. Ownership is not reverted by this operation; the device will require re-verification." onClose={() => !busy && setModal(null)}><form className="form-stack" onSubmit={resolveDispute}><SelectInput label="Resolved lifecycle state" value={targetState} onChange={(e) => setTargetState(e.target.value)}><option value="REGISTERED">Registered</option><option value="VERIFIED">Verified</option><option value="TRANSFERRED">Transferred</option></SelectInput><TextArea label="Resolution note" value={notes} onChange={(e) => setNotes(e.target.value)} minLength={10} maxLength={3000} required rows={4} placeholder="Record the basis for the resolution (at least 10 characters)."/><div className="modal-actions"><Button variant="secondary" type="button" onClick={() => setModal(null)} disabled={busy}>Cancel</Button><Button type="submit" loading={busy}>Resolve on-chain</Button></div></form></Modal>
     <Modal open={modal?.type === 'export-device'} title="Export device on-chain" description="This marks a confirmed V2 device as EXPORTED on Algorand and is not reversible through the UI." onClose={() => !busy && setModal(null)}><form className="form-stack" onSubmit={exportDevice}><TextArea label="Admin note" value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} maxLength={3000} placeholder="Reason for the export"/><div className="modal-actions"><Button variant="secondary" type="button" onClick={() => setModal(null)} disabled={busy}>Cancel</Button><Button type="submit" variant="danger" loading={busy}>Export on-chain</Button></div></form></Modal>
-    <ConfirmModal open={modal?.type === 'revoke-verifier'} title="Revoke service-centre access?" description={`This suspends ${modal?.item?.name || 'the verifier'} and removes active service-centre privileges. Existing verification requests may become unable to proceed.`} actionLabel="Revoke access" danger onCancel={() => setModal(null)} onConfirm={revokeVerifier} busy={busy}/>
+    <Modal open={modal?.type === 'require-kyc'} title="Require new KYC evidence" description={`Move ${modal?.item?.name || 'this role account'} into KYC_IN_PROGRESS and revoke currently verified role credentials. Protected role actions will remain locked until evidence review and activation are complete.`} onClose={() => !busy && setModal(null)}><form className="form-stack" onSubmit={requireRoleAccountKyc}><Notice kind="warning">This is an explicit security action and should only be used when the credential genuinely requires re-verification. It is not triggered by dashboard reads or temporary storage failures.</Notice><TextArea label="Reason for requiring KYC (required for audit)" value={notes} onChange={(e) => setNotes(e.target.value)} required minLength={10} maxLength={3000} rows={4} placeholder="Explain what credential or account condition requires a new review."/><div className="modal-actions"><Button variant="secondary" type="button" onClick={() => setModal(null)} disabled={busy}>Cancel</Button><Button type="submit" variant="danger" loading={busy} disabled={notes.trim().length < 10}>Require KYC</Button></div></form></Modal>
+    <ConfirmModal open={modal?.type === 'revoke-verifier'} title="Suspend service-centre access?" description={`This suspends ${modal?.item?.name || 'the verifier'} and removes active service-centre privileges. Use Require KYC instead when the account should be able to submit corrected evidence.`} actionLabel="Suspend access" danger onCancel={() => setModal(null)} onConfirm={revokeVerifier} busy={busy}/>
   </section>;
 }
 

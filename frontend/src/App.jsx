@@ -21,7 +21,7 @@ function NotificationCenter() {
   const rootRef = useRef(null);
 
   const loadNotifications = useCallback(async ({ quiet = false } = {}) => {
-    if (!profile?.user_id || profile.status !== 'ACTIVE') return;
+    if (!profile?.user_id || !['ACTIVE', 'KYC_IN_PROGRESS', 'REJECTED'].includes(profile.status)) return;
     if (!quiet) setLoading(true);
     try {
       const data = await apiData('/api/v1/notifications?limit=40');
@@ -63,7 +63,7 @@ function NotificationCenter() {
     };
   }, [open]);
 
-  if (!profile || profile.status !== 'ACTIVE') return null;
+  if (!profile || !['ACTIVE', 'KYC_IN_PROGRESS', 'REJECTED'].includes(profile.status)) return null;
 
   const markRead = async (item) => {
     if (item.read_at) return;
@@ -121,6 +121,7 @@ function Header() {
     ...(['FIRST_BUYER', 'BUYER', 'RESELLER'].includes(profile.role) ? [{ to: '/transfer', label: 'Transfers' }] : []),
     ...(profile.role === 'ADMIN' ? [{ to: '/admin', label: 'Admin console' }] : []),
     { to: '/account', label: 'Account' },
+    ...(profile.status !== 'SUSPENDED' ? [{ to: '/onboarding', label: 'KYC & evidence' }] : []),
     { to: '/track', label: 'Track passport' },
     { to: '/network', label: 'Network' },
   ] : [

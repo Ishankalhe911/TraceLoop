@@ -2,7 +2,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -12,6 +12,9 @@ from database import (
     AdminActionType,
     Device,
     DeviceStatus,
+    DeviceHardwareLog,
+    Dispute,
+    DisputeStatus,
     IdentityVersion,
     RegistrationStatus,
     DocStatus,
@@ -20,6 +23,11 @@ from database import (
     EvidenceType,
     EvidenceVerificationStatus,
     KYCDocument,
+    RecyclingRecord,
+    Transfer,
+    TransferStatus,
+    VerificationRequest,
+    VerificationStatus,
     User,
     UserRole,
     UserStatus,
@@ -38,6 +46,7 @@ from routes.evidence_routes import (
 from services.ledger_service import ledger_service
 from services.device_policy import require_confirmed_v2_device
 from services.notification_service import create_notification
+from services.lifecycle_anomaly_service import build_lifecycle_findings, explain_lifecycle_findings
 
 logger = logging.getLogger("TraceLoop.AdminRoutes")
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -1251,3 +1260,45 @@ def revoke_verifier(
         db.rollback()
         logger.exception("Failed to revoke verifier %s", verifier_id)
         raise HTTPException(status_code=500, detail="Verifier revocation failed. Check server logs.")
+
+@router.get("/lifecycle-anomalies")
+def get_lifecycle_anomalies(
+    limit: int = Query(60, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(RequireRole([UserRole.ADMIN])),
+):
+    """Return read-only, deterministic lifecycle review signals for admins.
+
+    This endpoint does not call the blockchain or mutate any lifecycle record.
+    Legacy V1 passports are excluded from operational patterns; V2 registrations
+    needing reconciliation are included in the separate registration signal.
+    """
+    data = build_lifecycle_findings(db, limit=limit)
+    return standard_response(data)
+
+
+@router.post("/lifecycle-anomalies/explain")
+def explain_lifecycle_anomalies(
+    limit: int = Query(60, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(RequireRole([UserRole.ADMIN])),
+):
+    """Generate a cautious AI case brief over server-recomputed review signals.
+
+    The client cannot supply arbitrary facts to Gemini. Signals are recomputed
+    server-side, and AI output is advisory only; no permissions or lifecycle
+    states are changed by this endpoint.
+    """
+    data = build_lifecycle_findings(db, limit=limit)
+    brief = explain_lifecycle_findings(data["findings"])
+    return standard_response({
+        "generated_at": data["generated_at"],
+        "findings_count": data["findings_count"],
+        "provider": brief.get("provider"),
+        "generated": brief.get("generated", False),
+        "model": brief.get("model"),
+        "fallback_reason": brief.get("fallback_reason"),
+        "summary": brief.get("summary"),
+        "recommended_checks": brief.get("recommended_checks", []),
+        "disclaimer": brief.get("disclaimer"),
+    })
