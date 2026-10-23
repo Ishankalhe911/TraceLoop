@@ -44,6 +44,7 @@ from routes.evidence_routes import (
     verify_evidence_file_integrity,
 )
 from services.ledger_service import ledger_service
+from services.stamp_policy import effective_stamp_valid
 from services.device_policy import require_confirmed_v2_device
 from services.notification_service import create_notification
 from services.lifecycle_anomaly_service import build_lifecycle_findings, explain_lifecycle_findings
@@ -922,7 +923,14 @@ def get_all_devices(
                         device.identity_version != IdentityVersion.V2_PUBLIC_ID
                         or device.registration_status != RegistrationStatus.CONFIRMED
                     ),
-                    "stamp_valid": device.stamp_valid,
+                    "stamp_valid": (
+                        device.stamp_valid
+                        if (
+                            device.identity_version == IdentityVersion.V1_LEGACY
+                            or device.registration_status == RegistrationStatus.LEGACY_TEST
+                        )
+                        else effective_stamp_valid(device.status, device.stamp_valid)
+                    ),
                     "current_owner_id": device.current_owner_id,
                     "is_for_sale": device.is_for_sale,
                     "registered_at": device.registered_at.isoformat() if device.registered_at else None,

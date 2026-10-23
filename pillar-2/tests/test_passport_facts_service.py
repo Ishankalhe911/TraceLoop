@@ -277,3 +277,63 @@ def test_missing_comparable_field_is_partial_not_a_false_match():
         assert any(check["result"] == "NOT_COMPARABLE" for check in facts["reconciliation"]["checks"])
     finally:
         _cleanup(engine, db)
+
+
+def test_legacy_transfer_raw_true_stamp_is_effectively_false_and_does_not_conflict():
+    """Older on-chain records may retain the last raw stamp bit after transfer."""
+    engine, db, device = _db_and_device(status=DeviceStatus.TRANSFERRED)
+    device.stamp_valid = False
+    db.commit()
+    ledger = FakeLedger(state={
+        "state_numeric": 2,
+        "state_label": "TRANSFERRED",
+        "owner_hash": OWNER_HASH,
+        "config_hash": config_hash(CONFIG),
+        # Simulates the raw bit retained by an older deployed contract.
+        "stamp_valid": True,
+        "last_verifier": "PRIVATE-VERIFIER-ADDRESS",
+        "updated_at": 123456,
+    })
+    try:
+        facts = PassportFactsService(
+            db, ledger_reader=ledger, history_reader=FakeHistory()
+        ).build(device)
+        stamp_check = next(
+            item for item in facts["reconciliation"]["checks"]
+            if item["field"] == "verification_stamp"
+        )
+        assert stamp_check["result"] == "MATCH"
+        assert facts["reconciliation"]["status"] == "MATCH"
+        # The public API communicates effective transfer eligibility, not the
+        # stale historical raw bit from the old contract.
+        assert "raw" not in stamp_check["explanation"].lower()
+    finally:
+        _cleanup(engine, db)
+
+
+def test_verified_state_with_database_chain_stamp_mismatch_remains_a_conflict():
+    """Normalization must not suppress a genuine mismatch in VERIFIED state."""
+    engine, db, device = _db_and_device(status=DeviceStatus.VERIFIED)
+    device.stamp_valid = False
+    db.commit()
+    ledger = FakeLedger(state={
+        "state_numeric": 2,
+        "state_label": "VERIFIED",
+        "owner_hash": OWNER_HASH,
+        "config_hash": config_hash(CONFIG),
+        "stamp_valid": True,
+        "last_verifier": "PRIVATE-VERIFIER-ADDRESS",
+        "updated_at": 123456,
+    })
+    try:
+        facts = PassportFactsService(
+            db, ledger_reader=ledger, history_reader=FakeHistory()
+        ).build(device)
+        stamp_check = next(
+            item for item in facts["reconciliation"]["checks"]
+            if item["field"] == "verification_stamp"
+        )
+        assert stamp_check["result"] == "CONFLICT"
+        assert facts["reconciliation"]["status"] == "CONFLICT"
+    finally:
+        _cleanup(engine, db)

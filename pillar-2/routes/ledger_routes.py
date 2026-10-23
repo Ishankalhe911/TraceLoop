@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from database import get_db, Device, LedgerEvent, User, IdentityVersion, RegistrationStatus, ChainStatus, DeviceStatus
 from auth import get_current_user
 from services.ledger_service import ledger_service
+from services.stamp_policy import effective_stamp_valid
 
 router = APIRouter(prefix="/ledger", tags=["Blockchain Ledger"])
 
@@ -51,6 +52,10 @@ def get_onchain_state(
             chain_state = ledger_service.get_device_state(device.public_id)
 
         raw_state = str(chain_state.get("state_label", "UNKNOWN")).upper()
+        stamp_state = raw_state
+        stamp_valid = chain_state.get("stamp_valid")
+        if not is_legacy:
+            stamp_valid = effective_stamp_valid(stamp_state, stamp_valid)
         if raw_state == DeviceStatus.DISPUTED.value:
             raw_state = None
         # Never expose owner hashes, config hashes, verifier wallet addresses, or
@@ -59,7 +64,7 @@ def get_onchain_state(
             "device_id": device.public_id,
             "identity_version": _identity_version_value(device),
             "state_label": raw_state,
-            "stamp_valid": chain_state.get("stamp_valid"),
+            "stamp_valid": stamp_valid,
             "updated_at": chain_state.get("updated_at"),
             "is_legacy_test": is_legacy,
             "read_only": is_legacy,

@@ -30,6 +30,7 @@ from database import (
     RecyclingStatus,
 )
 from services.chain_history_service import ChainHistoryService, PUBLIC_EVENT_TYPES
+from services.stamp_policy import effective_stamp_valid
 
 logger = logging.getLogger(__name__)
 
@@ -265,22 +266,29 @@ class PassportFactsService:
                 })
 
             local_stamp = getattr(device, "stamp_valid", None)
-            chain_stamp = chain_state.get("stamp_valid")
+            raw_chain_stamp = chain_state.get("stamp_valid")
+            # Compare effective stamp validity for a new transfer. Older contract
+            # deployments may retain the last raw stamp bit after a transfer or
+            # terminal transition; those states cannot use that stamp for transfer.
+            chain_stamp = (
+                raw_chain_stamp if is_legacy else
+                effective_stamp_valid(raw_chain_state, raw_chain_stamp)
+            )
             if isinstance(local_stamp, bool) and isinstance(chain_stamp, bool):
                 checks.append({
                     "field": "verification_stamp",
                     "result": "MATCH" if local_stamp is chain_stamp else "CONFLICT",
                     "explanation": (
-                        "The stamp-valid flag matches between the database and chain."
+                        "The current transfer-stamp status agrees with the lifecycle state."
                         if local_stamp is chain_stamp else
-                        "The stamp-valid flag differs between the database and chain."
+                        "The database and effective transfer-stamp status disagree."
                     ),
                 })
             else:
                 checks.append({
                     "field": "verification_stamp",
                     "result": "NOT_COMPARABLE",
-                    "explanation": "A comparable stamp-valid flag was not available from both sources.",
+                    "explanation": "A comparable transfer-stamp status was not available from both sources.",
                 })
         else:
             # Avoid returning individual check results if the current state is

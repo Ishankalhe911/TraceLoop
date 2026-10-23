@@ -53,6 +53,7 @@ from services.device_identity import (
 )
 from services.ledger_service import LedgerSubmissionError, ledger_service
 from services.notification_service import create_notification
+from services.stamp_policy import effective_stamp_valid
 
 router = APIRouter(prefix="/devices", tags=["Devices"])
 logger = logging.getLogger(__name__)
@@ -620,7 +621,14 @@ def get_my_devices(
                     _enum_value(device.identity_version) != IdentityVersion.V2_PUBLIC_ID.value
                     or registration_status != RegistrationStatus.CONFIRMED.value
                 ),
-                "stamp_valid": device.stamp_valid,
+                "stamp_valid": (
+                    device.stamp_valid
+                    if (
+                        _enum_value(device.identity_version) == IdentityVersion.V1_LEGACY.value
+                        or registration_status == RegistrationStatus.LEGACY_TEST.value
+                    )
+                    else effective_stamp_valid(device_status, device.stamp_valid)
+                ),
                 "is_for_sale": device.is_for_sale,
                 "asking_price": float(device.asking_price) if device.asking_price else None,
                 "last_verified_at": (
@@ -764,10 +772,19 @@ def get_public_passport(
     # Only a disputed state itself is omitted from the public view.
     public_status = None if dispute_state_hidden else db_status
     public_chain_status = None if dispute_state_hidden else chain_status
-    stamp_valid = (
-        bool(chain_state.get("stamp_valid")) if chain_state is not None
-        else bool(device.stamp_valid)
-    )
+    # Report whether the stamp is active for a new transfer. Older contract
+    # deployments can retain a raw True bit after the device leaves VERIFIED;
+    # lifecycle state is authoritative for this effective/read-facing value.
+    if is_legacy:
+        stamp_valid = (
+            bool(chain_state.get("stamp_valid")) if chain_state is not None
+            else bool(device.stamp_valid)
+        )
+    else:
+        stamp_valid = effective_stamp_valid(
+            chain_state.get("state_label") if chain_state is not None else db_status,
+            chain_state.get("stamp_valid") if chain_state is not None else device.stamp_valid,
+        )
 
     event_payload = []
     history_payload = []
@@ -939,7 +956,9 @@ def get_device(
                 "db_status": _enum_value(db_device.status),
                 "registration_status": registration_status,
                 "chain_status": chain_state["state_label"],
-                "stamp_valid": chain_state["stamp_valid"],
+                "stamp_valid": effective_stamp_valid(
+                    chain_state.get("state_label"), chain_state.get("stamp_valid")
+                ),
                 "current_config": db_device.current_config,
                 "last_verified_at": (
                     make_aware(db_device.last_verified_at).isoformat()
@@ -961,7 +980,9 @@ def get_device(
                 "db_status": _enum_value(db_device.status),
                 "registration_status": registration_status,
                 "chain_status": "UNREACHABLE",
-                "stamp_valid": db_device.stamp_valid,
+                "stamp_valid": effective_stamp_valid(
+                    _enum_value(db_device.status), db_device.stamp_valid
+                ),
                 "current_config": db_device.current_config,
                 "last_verified_at": (
                     make_aware(db_device.last_verified_at).isoformat()
